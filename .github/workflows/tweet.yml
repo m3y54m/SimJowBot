@@ -1,0 +1,44 @@
+name: Daily Tweet
+
+on:
+  schedule:
+    # Runs at 19:00 UTC every day
+    - cron: '0 19 * * *'
+    # Backup run 3 hours later
+    - cron: '0 22 * * *'
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  tweet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5  # Short timeout since we don't want to wait for rate limits
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install tweepy python-dotenv
+
+      - name: Run bot script
+        run: python bot.py
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
+          API_KEY_SECRET: ${{ secrets.API_KEY_SECRET }}
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+          ACCESS_TOKEN_SECRET: ${{ secrets.ACCESS_TOKEN_SECRET }}
+          BEARER_TOKEN: ${{ secrets.BEARER_TOKEN }}
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git add counter.txt rate_limit_failure.txt
+          git commit -m "Update bot files after run" || echo "No changes to commit"
+          git push
