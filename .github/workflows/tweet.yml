@@ -2,10 +2,10 @@ name: Daily Tweet
 
 on:
   schedule:
-    # Runs at 19:00 UTC every day
-    - cron: '0 19 * * *'
-    # Backup run 3 hours later
-    - cron: '0 22 * * *'
+    # Runs every hour to ensure daily tweet is posted (bot script handles daily logic)
+    # Cron format: minute hour day-of-month month day-of-week
+    # '0 * * * *' = at minute 0 of every hour
+    - cron: '0 * * * *'
   workflow_dispatch: # Allow manual triggering
 
 jobs:
