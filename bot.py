@@ -800,7 +800,7 @@ def main() -> None:
     # Check if we need to tweet today
     if stored_counter >= expected_counter:
         logger.info("✅ No tweet needed today. Stored counter is up to date.")
-        return
+        sys.exit(0)
     
     lagging_days = expected_counter - stored_counter
     logger.info(f"⚠️  Stored counter is behind by {lagging_days} day(s). Proceeding to tweet...")
@@ -856,86 +856,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         sys.exit(1)
-
-# Legacy main script (keeping for backwards compatibility, but commented out)
-"""
-# Track whether any changes were made that need committing by CI
-changes_made = False
-
-# --- Reading the counter ---
-stored_counter = read_counter()
-expected_counter = get_counter_value_for_today()
-
-print(f"🕒 Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print(f"🔢 Stored counter value: {stored_counter}")
-print(f"🔢 Expected counter value: {expected_counter}\n")
-
-# --- Check if we need to tweet today ---
-if stored_counter >= expected_counter:
-    print("✅ No tweet needed today. Stored counter is up to date.")
-    exit(0)
-else:
-    lagging_days = expected_counter - stored_counter
-    print(
-        f"⚠️  Stored counter is behind by {lagging_days} day(s). Proceeding to tweet..."
-    )
-
-    # --- Authenticate with the Twitter API ---
-    client = tweepy.Client(
-        bearer_token=Config.BEARER_TOKEN,
-        consumer_key=Config.API_KEY,
-        consumer_secret=Config.API_KEY_SECRET,
-        access_token=Config.ACCESS_TOKEN,
-        access_token_secret=Config.ACCESS_TOKEN_SECRET,
-    )
-
-    for i in range(lagging_days):
-        new_counter = stored_counter + i + 1
-        print(f"\n--- Processing counter value: {new_counter} ---")
-
-        # --- Check if we're still in a rate limit cooldown ---
-        # In CI environments (like GitHub Actions), fail fast instead of waiting
-        is_ci_environment = os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS")
-
-        if not check_rate_limit_status():
-            if is_ci_environment:
-                print(
-                    "❌ Rate limit active. Exiting in CI environment to allow scheduled retry."
-                )
-                print(
-                    "💡 Consider running this bot on a cron schedule (every 20-30 minutes)"
-                )
-                # If rate limit file exists, it means we need to commit it
-                if os.path.exists(Config.RATE_LIMIT_FILE):
-                    changes_made = True
-                break  # Exit the loop instead of exit(1)
-            else:
-                print(
-                    f"⏳ Waiting {Config.TWITTER_RATE_LIMIT_RESET_MINUTES} minutes for rate limit to reset..."
-                )
-                time.sleep(
-                    Config.TWITTER_RATE_LIMIT_RESET_MINUTES * 60
-                )  # Convert minutes to seconds
-                print("🔄 Checking rate limit status again...")
-
-        # --- Try posting the tweet ---
-        success = try_posting_tweet(client, new_counter)
-        if success:
-            changes_made = True
-            print(f"✅ Successfully posted tweet for counter {new_counter}")
-        else:
-            print(f"❌ Failed to post tweet for counter {new_counter}")
-            # If we hit rate limits or other errors, save the rate limit file
-            # and exit so the workflow can commit any successful changes
-            if os.path.exists(Config.RATE_LIMIT_FILE):
-                changes_made = True
-            break  # Exit the loop on any failure
-
-# --- Final exit logic ---
-if changes_made:
-    print("📝 Changes were made during this run - exiting with success code for commit")
-    exit(0)
-else:
-    print("📝 No changes were made during this run")
-    exit(0)
-"""
