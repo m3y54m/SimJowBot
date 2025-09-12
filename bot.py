@@ -255,14 +255,18 @@ def try_posting_tweet(client, new_counter):
                     user.data.username, selected_tweet.id
                 )
                 print(f"🎯 Selected latest quoted tweet: {selected_tweet_url}")
-
+              
                 # 4. Post a quote tweet with the new_counter in Persian words
-                print_tweet_text = f"{convert_to_persian_word(new_counter)} تو"
 
-                print(f"📝 Posting quote tweet with text:\n{print_tweet_text}")
+                if new_counter == 1000:
+                    tweet_text = "هزارتو"
+                else:
+                    tweet_text = f"{convert_to_persian_word(new_counter)} تو"
+
+                print(f"📝 Posting quote tweet with text:\n{tweet_text}")
 
                 response = client.create_tweet(
-                    text=print_tweet_text, quote_tweet_id=selected_tweet.id
+                    text=tweet_text, quote_tweet_id=selected_tweet.id
                 )
 
                 response_tweet_url = get_tweet_url(
