@@ -224,7 +224,7 @@ def try_posting_tweet(client, new_counter):
         # 2. Get tweets using user ID
         tweets = client.get_users_tweets(
             user.data.id,
-            max_results=5,
+            max_results=50,  # 5-100 is the allowed range
             tweet_fields=["created_at", "public_metrics", "referenced_tweets"],
             expansions=["referenced_tweets.id"],
         )
@@ -239,18 +239,22 @@ def try_posting_tweet(client, new_counter):
             for i, tweet in enumerate(tweets.data, 1):
                 print_tweet_info(tweet, i, user.data.username)
 
-            # 3. Select first tweet for testing
-            latest_tweet = tweets.data[0]
-            selected_type = get_tweet_type(latest_tweet)
-            latest_tweet_url = get_tweet_url(user.data.username, latest_tweet.id)
-            print(f"🎯 Selected for quote tweet: {selected_type} | {latest_tweet_url}")
+            # 3. Filter for quoted tweets first
+            quoted_tweets = [
+                tweet
+                for tweet in tweets.data
+                if hasattr(tweet, "referenced_tweets")
+                and tweet.referenced_tweets
+                and tweet.referenced_tweets[0].type == "quoted"
+            ]
 
-            # Check if the tweet is a quoted tweet before proceeding
-            if (
-                hasattr(latest_tweet, "referenced_tweets")
-                and latest_tweet.referenced_tweets
-                and latest_tweet.referenced_tweets[0].type == "quoted"
-            ):
+            if quoted_tweets:
+                # Select the latest quoted tweet (first in the filtered list)
+                selected_tweet = quoted_tweets[0]
+                selected_tweet_url = get_tweet_url(
+                    user.data.username, selected_tweet.id
+                )
+                print(f"🎯 Selected latest quoted tweet: {selected_tweet_url}")
 
                 # 4. Post a quote tweet with the new_counter in Persian words
                 print_tweet_text = f"{convert_to_persian_word(new_counter)} تو"
@@ -258,7 +262,7 @@ def try_posting_tweet(client, new_counter):
                 print(f"📝 Posting quote tweet with text:\n{print_tweet_text}")
 
                 response = client.create_tweet(
-                    text=print_tweet_text, quote_tweet_id=latest_tweet.id
+                    text=print_tweet_text, quote_tweet_id=selected_tweet.id
                 )
 
                 response_tweet_url = get_tweet_url(
@@ -278,9 +282,9 @@ def try_posting_tweet(client, new_counter):
                     return False  # Tweet posted but counter update failed
             else:
                 print(
-                    f"❌ Selected tweet is not a quoted tweet. Skipping quote tweet posting."
+                    f"❌ No quoted tweets found in the retrieved tweets. Skipping quote tweet posting."
                 )
-                return False  # Not a quoted tweet, so we can't proceed
+                return False  # No quoted tweets found
         else:
             print("❌ No tweets found in response.")
             return False  # No tweets to quote
