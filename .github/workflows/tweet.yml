@@ -2,10 +2,18 @@ name: Daily Tweet
 
 on:
   schedule:
-    # Runs every hour to ensure daily tweet is posted (bot script handles daily logic)
-    # Cron format: minute hour day-of-month month day-of-week
-    # '0 * * * *' = at minute 0 of every hour
-    - cron: '0 * * * *'
+    # Main daily tweet at 19:17 (7 PM)
+    - cron: '17 19 * * *'
+    # Retry attempts every 17 minutes for 9 times
+    - cron: '34 19 * * *'  # 19:34
+    - cron: '51 19 * * *'  # 19:51
+    - cron: '8 20 * * *'   # 20:08
+    - cron: '25 20 * * *'  # 20:25
+    - cron: '42 20 * * *'  # 20:42
+    - cron: '59 20 * * *'  # 20:59
+    - cron: '16 21 * * *'  # 21:16
+    - cron: '33 21 * * *'  # 21:33
+    - cron: '50 21 * * *'  # 21:50
   workflow_dispatch: # Allow manual triggering
 
 jobs:
