@@ -119,7 +119,9 @@ def handle_rate_limit_error(is_specific_rate_limit=True):
     print(f"\n⏰ Rate limit will reset at: {reset_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     if is_specific_rate_limit:
-        print(f"Please wait {TWITTER_RATE_LIMIT_RESET_MINUTES} minutes before running the bot again.")
+        print(
+            f"Please wait {TWITTER_RATE_LIMIT_RESET_MINUTES} minutes before running the bot again."
+        )
         print(f"\nTo avoid this issue in the future:")
         print("1. Wait at least 15 minutes between runs")
         print("2. Consider upgrading to a paid plan for higher limits")
@@ -202,6 +204,10 @@ def check_rate_limit_status():
 
 
 def try_posting_tweet(client, new_counter):
+    """
+    Try to post a tweet and update the counter.
+    Returns True if successful, False otherwise.
+    """
     try:
         # 1. Get the authenticated user (current user)
         user = client.get_me(user_fields=["protected", "public_metrics", "verified"])
@@ -256,15 +262,21 @@ def try_posting_tweet(client, new_counter):
             try:
                 store_counter(new_counter)
                 print(f"🔢 Stored counter updated to {new_counter}")
+                return True  # Successfully posted and updated counter
             except Exception as e:
-                print(f"⚠️  Tweet posted successfully, but failed to update stored counter: {e}")
+                print(
+                    f"⚠️  Tweet posted successfully, but failed to update stored counter: {e}"
+                )
                 print("🔧 You may need to manually update the stored counter file")
+                return False  # Tweet posted but counter update failed
         else:
             print("❌ No tweets found in response.")
+            return False  # No tweets to quote
 
     except tweepy.TooManyRequests as e:
         print(f"Rate limit error: {e}")
         handle_rate_limit_error(is_specific_rate_limit=True)
+        return False  # Rate limited
     except tweepy.TweepyException as e:
         print(f"An error occurred: {e}")
         # Check if it's a rate limit error that wasn't caught by TooManyRequests
@@ -272,9 +284,13 @@ def try_posting_tweet(client, new_counter):
             handle_rate_limit_error(is_specific_rate_limit=False)
         else:
             print("This is a general Twitter API error (not rate limiting).")
+        return False  # Other Twitter API error
 
 
 # Main script execution starts here
+
+# Track whether any changes were made that need committing by CI
+changes_made = False
 
 # --- Reading the counter ---
 stored_counter = read_counter()
@@ -290,7 +306,9 @@ if stored_counter >= expected_counter:
     exit(0)
 else:
     lagging_days = expected_counter - stored_counter
-    print(f"⚠️  Stored counter is behind by {lagging_days} day(s). Proceeding to tweet...")
+    print(
+        f"⚠️  Stored counter is behind by {lagging_days} day(s). Proceeding to tweet..."
+    )
 
     # --- Authenticate with the Twitter API ---
     client = tweepy.Client(
@@ -311,13 +329,42 @@ else:
 
         if not check_rate_limit_status():
             if is_ci_environment:
-                print("❌ Rate limit active. Exiting in CI environment to allow scheduled retry.")
-                print("💡 Consider running this bot on a cron schedule (every 20-30 minutes)")
-                exit(1)
+                print(
+                    "❌ Rate limit active. Exiting in CI environment to allow scheduled retry."
+                )
+                print(
+                    "💡 Consider running this bot on a cron schedule (every 20-30 minutes)"
+                )
+                # If rate limit file exists, it means we need to commit it
+                if os.path.exists(RATE_LIMIT_FILE):
+                    changes_made = True
+                break  # Exit the loop instead of exit(1)
             else:
-                print(f"⏳ Waiting {TWITTER_RATE_LIMIT_RESET_MINUTES} minutes for rate limit to reset...")
-                time.sleep(TWITTER_RATE_LIMIT_RESET_MINUTES * 60)  # Convert minutes to seconds
+                print(
+                    f"⏳ Waiting {TWITTER_RATE_LIMIT_RESET_MINUTES} minutes for rate limit to reset..."
+                )
+                time.sleep(
+                    TWITTER_RATE_LIMIT_RESET_MINUTES * 60
+                )  # Convert minutes to seconds
                 print("🔄 Checking rate limit status again...")
 
         # --- Try posting the tweet ---
-        try_posting_tweet(client, new_counter)
+        success = try_posting_tweet(client, new_counter)
+        if success:
+            changes_made = True
+            print(f"✅ Successfully posted tweet for counter {new_counter}")
+        else:
+            print(f"❌ Failed to post tweet for counter {new_counter}")
+            # If we hit rate limits or other errors, save the rate limit file
+            # and exit so the workflow can commit any successful changes
+            if os.path.exists(RATE_LIMIT_FILE):
+                changes_made = True
+            break  # Exit the loop on any failure
+
+# --- Final exit logic ---
+if changes_made:
+    print("📝 Changes were made during this run - exiting with success code for commit")
+    exit(0)
+else:
+    print("📝 No changes were made during this run")
+    exit(0)
