@@ -51,7 +51,7 @@ def store_counter(counter):
         raise
 
 
-def build_tweet_url(username, tweet_id):
+def get_tweet_url(username, tweet_id):
     """
     Build a tweet URL using username and tweet ID.
 
@@ -160,7 +160,7 @@ def print_tweet_info(tweet, index, username):
     text_preview = tweet.text[:100] + "..." if len(tweet.text) > 100 else tweet.text
     text_preview = text_preview.replace("\n", " ")  # Replace newlines with spaces
 
-    tweet_url = build_tweet_url(username, tweet.id)
+    tweet_url = get_tweet_url(username, tweet.id)
     print(f"{index:2d}. {tweet_type} | {created_at} | {tweet_url}")
     print(f"    📝 {text_preview}")
     print()
@@ -240,35 +240,47 @@ def try_posting_tweet(client, new_counter):
                 print_tweet_info(tweet, i, user.data.username)
 
             # 3. Select first tweet for testing
-            latest_tweet_id = tweets.data[0].id
-            selected_type = get_tweet_type(tweets.data[0])
-            latest_tweet_url = build_tweet_url(user.data.username, latest_tweet_id)
+            latest_tweet = tweets.data[0]
+            selected_type = get_tweet_type(latest_tweet)
+            latest_tweet_url = get_tweet_url(user.data.username, latest_tweet.id)
             print(f"🎯 Selected for quote tweet: {selected_type} | {latest_tweet_url}")
 
-            # 4. Post a quote tweet with the new_counter in Persian words
-            print_tweet_text = f"{convert_to_persian_word(new_counter)} تو"
+            # Check if the tweet is a quoted tweet before proceeding
+            if (
+                hasattr(latest_tweet, "referenced_tweets")
+                and latest_tweet.referenced_tweets
+                and latest_tweet.referenced_tweets[0].type == "quoted"
+            ):
 
-            print(f"📝 Posting quote tweet with text:\n{print_tweet_text}")
+                # 4. Post a quote tweet with the new_counter in Persian words
+                print_tweet_text = f"{convert_to_persian_word(new_counter)} تو"
 
-            response = client.create_tweet(
-                text=print_tweet_text, quote_tweet_id=latest_tweet_id
-            )
+                print(f"📝 Posting quote tweet with text:\n{print_tweet_text}")
 
-            response_tweet_url = build_tweet_url(
-                user.data.username, response.data["id"]
-            )
-            print(f"✅ Quote tweet posted successfully! {response_tweet_url}")
-
-            try:
-                store_counter(new_counter)
-                print(f"🔢 Stored counter updated to {new_counter}")
-                return True  # Successfully posted and updated counter
-            except Exception as e:
-                print(
-                    f"⚠️  Tweet posted successfully, but failed to update stored counter: {e}"
+                response = client.create_tweet(
+                    text=print_tweet_text, quote_tweet_id=latest_tweet.id
                 )
-                print("🔧 You may need to manually update the stored counter file")
-                return False  # Tweet posted but counter update failed
+
+                response_tweet_url = get_tweet_url(
+                    user.data.username, response.data["id"]
+                )
+                print(f"✅ Quote tweet posted successfully! {response_tweet_url}")
+
+                try:
+                    store_counter(new_counter)
+                    print(f"🔢 Stored counter updated to {new_counter}")
+                    return True  # Successfully posted and updated counter
+                except Exception as e:
+                    print(
+                        f"⚠️  Tweet posted successfully, but failed to update stored counter: {e}"
+                    )
+                    print("🔧 You may need to manually update the stored counter file")
+                    return False  # Tweet posted but counter update failed
+            else:
+                print(
+                    f"❌ Selected tweet is not a quoted tweet. Skipping quote tweet posting."
+                )
+                return False  # Not a quoted tweet, so we can't proceed
         else:
             print("❌ No tweets found in response.")
             return False  # No tweets to quote
