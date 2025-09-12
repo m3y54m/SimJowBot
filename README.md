@@ -597,7 +597,7 @@ print(f"Expected counter: {DateTimeUtil.get_counter_value_for_today()}")
 
 # Check stored counter
 fm = FileManager()
-print(f"Stored counter: {fm.read_counter()}")
+print(f"Stored counter: {fm.get_stored_counter()}")
 
 # Check CI environment
 print(f"CI Environment: {DateTimeUtil.is_ci_environment()}")
