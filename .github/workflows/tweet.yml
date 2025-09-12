@@ -49,6 +49,23 @@ jobs:
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
-          git add counter.txt rate_limit_failure.txt
-          git commit -m "Update bot files after run" || echo "No changes to commit"
-          git push
+          
+          # Add files that exist
+          if [ -f "counter.txt" ]; then
+            git add counter.txt
+            echo "Added counter.txt"
+          fi
+          
+          if [ -f "rate_limit_failure.txt" ]; then
+            git add rate_limit_failure.txt
+            echo "Added rate_limit_failure.txt"
+          fi
+          
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update bot files after run"
+            git push
+            echo "Changes committed and pushed"
+          fi
