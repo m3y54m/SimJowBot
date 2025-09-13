@@ -571,7 +571,7 @@ The test suite includes proper setup and teardown:
 
 ## License
 
-This project is open source. Please ensure you comply with Twitter's Terms of Service and API usage policies when using this bot.
+This project is open source and licensed under the MIT License. See the [LICENSE](./LICENSE) file for details. Please ensure you comply with Twitter's Terms of Service and API usage policies when using this bot.
 
 ## Troubleshooting
 
