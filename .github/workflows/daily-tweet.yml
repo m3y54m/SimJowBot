@@ -2,14 +2,12 @@ name: Daily Tweet
 
 on:
   schedule:
-    # Main daily tweet at 18:47 (6:47 PM)
-    - cron: '47 18 * * *'
-    # Retry attempts every 17 minutes for 5 times
-    - cron: '4 19 * * *'   # 19:04
-    - cron: '21 19 * * *'  # 19:21
-    - cron: '38 19 * * *'  # 19:38
-    - cron: '55 19 * * *'  # 19:55
-    - cron: '12 20 * * *'  # 20:12
+  # Main daily tweet at 16:47
+  - cron: '47 16 * * *'
+  # Retry attempts every 17 minutes for another 3 times
+  - cron: '4 17 * * *'   # 17:04
+  - cron: '21 17 * * *'  # 17:21
+  - cron: '38 17 * * *'  # 17:38
   workflow_dispatch: # Allow manual triggering
 
 jobs:
