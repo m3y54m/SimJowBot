@@ -61,7 +61,10 @@ class Config:
     # Bot configuration
     START_DATE: date = date(2025, 3, 18)
     ABS_COUNTING_LIMIT: int = 999999
-    MAX_COUNTER_VALUE: int = int(os.environ.get("MAX_COUNTER_VALUE", str(ABS_COUNTING_LIMIT)))
+    MIN_COUNTER_VALUE: int = 1
+    MAX_COUNTER_VALUE: int = int(
+        os.environ.get("MAX_COUNTER_VALUE", str(ABS_COUNTING_LIMIT))
+    )
     TWITTER_RATE_LIMIT_RESET_MINUTES: int = 16
     MAX_TWEET_PREVIEW_LENGTH: int = 100
     MAX_TWEETS_TO_FETCH: int = 50
@@ -93,20 +96,29 @@ class FileManager:
         Read the counter from the counter file.
 
         Returns:
-            int: The stored counter value, defaults to 1 if file not found or invalid
+            int: The stored counter value, defaults to 0 if file not found or invalid
         """
         try:
             with open(self.counter_file, "r", encoding="utf-8") as file:
                 counter_value = int(file.read().strip())
+                if (
+                    counter_value < Config.MIN_COUNTER_VALUE
+                    or counter_value > Config.MAX_COUNTER_VALUE
+                ):
+                    logger.warning(
+                        f"Counter value {counter_value} out of bounds, resetting to 0"
+                    )
+                    return 0
+
                 return counter_value
         except FileNotFoundError:
             logger.warning(
-                f"Counter file {self.counter_file} not found, defaulting to 1"
+                f"Counter file {self.counter_file} not found, defaulting to 0"
             )
-            return 1
+            return 0
         except (ValueError, OSError) as e:
-            logger.error(f"Error reading counter file: {e}, defaulting to 1")
-            return 1
+            logger.error(f"Error reading counter file: {e}, defaulting to 0")
+            return 0
 
     def store_counter(self, counter: int) -> None:
         """
@@ -197,7 +209,7 @@ class DateTimeUtil:
         """
         Calculate the current counter value based on days passed since start date.
 
-        The counter starts at 1 on March 18, 2025 and increments by one
+        The counter starts at Config.MIN_COUNTER_VALUE on March 18, 2025 and increments by one
         each day, up to a maximum of MAX_COUNTER_VALUE.
 
         Returns:
@@ -208,11 +220,11 @@ class DateTimeUtil:
         delta = today - Config.START_DATE
         days_passed = delta.days
 
-        # The count starts from 1, so add 1 to the number of days passed
+        # The count starts from Config.MIN_COUNTER_VALUE, so add 1 to the number of days passed
         count = days_passed + 1
 
         # Check for edge cases
-        if count < 1 or count > Config.MAX_COUNTER_VALUE:
+        if count < Config.MIN_COUNTER_VALUE or count > Config.MAX_COUNTER_VALUE:
             return 0
 
         return count
@@ -310,84 +322,6 @@ class TwitterUtil:
             return Config.MAX_COUNTER_TWEET_TEXT
         else:
             return f"{convert_to_persian_word(counter)} تو"
-
-
-def get_stored_counter():
-    """Read the counter from the counter file"""
-    try:
-        with open(Config.COUNTER_FILE, "r") as f:
-            return int(f.read().strip())
-    except FileNotFoundError:
-        return 1
-    except ValueError:
-        return 1
-
-
-def store_counter(counter):
-    """Update the counter in the counter file"""
-    try:
-        with open(Config.COUNTER_FILE, "w") as f:
-            f.write(str(counter))
-        print(f"✅ Counter file updated successfully to {counter}")
-    except OSError as e:
-        print(f"❌ Error writing to counter file: {e}")
-        print(f"🔍 Attempted to write counter value: {counter}")
-        print(f"📁 Counter file path: {Config.COUNTER_FILE}")
-        # Don't exit here - let the calling code decide how to handle this
-        raise
-    except Exception as e:
-        print(f"❌ Unexpected error updating counter: {e}")
-        raise
-
-
-def get_tweet_url(username, tweet_id):
-    """
-    Build a tweet URL using username and tweet ID.
-
-    Args:
-        username (str): The Twitter username (without @)
-        tweet_id (str or int): The tweet ID
-
-    Returns:
-        str: The complete tweet URL
-    """
-    return f"https://x.com/{username}/status/{tweet_id}"
-
-
-def get_counter_value_for_today():
-    """
-    Calculates the current counter value based on the number of days
-    passed since March 18, 2025.
-
-    The counter starts at 1 on March 18, 2025 and increments by one
-    each day, up to a maximum of MAX_COUNTER_VALUE.
-
-    Returns:
-        int: The counter value for the current day. Returns 0 if the
-             date is before the start date or after the MAX_COUNTER_VALUE limit.
-    """
-    start_date = date(2025, 3, 18)
-    today = date.today()
-
-    # Calculate the difference in days
-    delta = today - start_date
-    days_passed = delta.days
-
-    # The count starts from 1, so add 1 to the number of days passed.
-    # The maximum count is MAX_COUNTER_VALUE.
-    count = days_passed + 1
-
-    # Check for the edge cases
-    if count < 1 or count > Config.MAX_COUNTER_VALUE:
-        return 0
-    else:
-        return count
-
-
-def save_rate_limit_failure():
-    """Save the timestamp when rate limit was hit"""
-    with open(Config.RATE_LIMIT_FILE, "w") as f:
-        f.write(datetime.now().isoformat())
 
 
 class TwitterClient:
@@ -564,30 +498,37 @@ class TwitterClient:
             return False
 
         logger.info(f"\n📋 Found {len(tweets.data)} tweets:")
+
+        selected_tweet = None
+        previous_counter = new_counter - 1
+        previous_quoted_tweet_text = TwitterUtil.generate_persian_tweet_text(
+            previous_counter
+        )
         for i, tweet in enumerate(tweets.data, 1):
             TwitterUtil.print_tweet_info(tweet, i, user.data.username)
+            # Filter for quoted tweets
+            if (
+                hasattr(tweet, "referenced_tweets")
+                and tweet.referenced_tweets
+                and (
+                    tweet.referenced_tweets[0].type == "quoted"
+                    or (previous_counter == Config.MIN_COUNTER_VALUE)
+                )
+            ):
+                # Check if tweet text includes previous quoted tweet text
+                if previous_quoted_tweet_text in tweet.text:
+                    selected_tweet = tweet
+                    selected_tweet_url = TwitterUtil.get_tweet_url(
+                        user.data.username, selected_tweet.id
+                    )
+                    print(f"🎯 Selected latest quoted tweet: {selected_tweet_url}")
+                    break
 
-        # Filter for quoted tweets
-        quoted_tweets = [
-            tweet
-            for tweet in tweets.data
-            if hasattr(tweet, "referenced_tweets")
-            and tweet.referenced_tweets
-            and tweet.referenced_tweets[0].type == "quoted"
-        ]
-
-        if not quoted_tweets:
+        if selected_tweet is None:
             logger.error(
-                "❌ No quoted tweets found in the retrieved tweets. Skipping quote tweet posting."
+                "❌ Previous quoted tweet was not found in the retrieved tweets. Skipping quote tweet posting."
             )
             return False
-
-        # Select the latest quoted tweet
-        selected_tweet = quoted_tweets[0]
-        selected_tweet_url = TwitterUtil.get_tweet_url(
-            user.data.username, selected_tweet.id
-        )
-        logger.info(f"🎯 Selected latest quoted tweet: {selected_tweet_url}")
 
         # Generate tweet text and post
         tweet_text = TwitterUtil.generate_persian_tweet_text(new_counter)
@@ -612,211 +553,6 @@ class TwitterClient:
         return False
 
 
-def handle_rate_limit_error(is_specific_rate_limit=True):
-    """Handle rate limit errors with consistent messaging"""
-    save_rate_limit_failure()
-
-    if is_specific_rate_limit:
-        print("🚫 Rate limit exceeded!")
-        print("\nTwitter API v2 Rate Limits (Free Tier):")
-        print("- Get user tweets: 75 requests per 15 minutes")
-        print("- Post tweets: 25 posts per 24 hours")
-        print("- Most endpoints reset every 15 minutes")
-    else:
-        print("This appears to be a rate limit error.")
-
-    # Calculate when rate limit will reset
-    reset_time = datetime.now() + timedelta(
-        minutes=Config.TWITTER_RATE_LIMIT_RESET_MINUTES
-    )
-    print(f"\n⏰ Rate limit will reset at: {reset_time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-    if is_specific_rate_limit:
-        print(
-            f"Please wait {Config.TWITTER_RATE_LIMIT_RESET_MINUTES} minutes before running the bot again."
-        )
-        print(f"\nTo avoid this issue in the future:")
-        print("1. Wait at least 15 minutes between runs")
-        print("2. Consider upgrading to a paid plan for higher limits")
-    else:
-        print("Free plans have very limited requests per month.")
-
-
-def get_tweet_type(tweet):
-    """Determine the type of a tweet based on its properties"""
-    if hasattr(tweet, "referenced_tweets") and tweet.referenced_tweets:
-        ref_type = tweet.referenced_tweets[0].type
-        if ref_type == "retweeted":
-            return "🔄 Retweet"
-        elif ref_type == "replied_to":
-            return "💬 Reply"
-        elif ref_type == "quoted":
-            return "📝 Quote Tweet"
-
-    # Check if it's a reply by looking at the text (starts with @username)
-    if hasattr(tweet, "text") and tweet.text.startswith("@"):
-        return "💬 Reply"
-
-    return "📄 Original Tweet"
-
-
-def print_tweet_info(tweet, index, username):
-    """Print formatted information about a tweet"""
-    tweet_type = get_tweet_type(tweet)
-    created_at = (
-        tweet.created_at.strftime("%Y-%m-%d %H:%M")
-        if hasattr(tweet, "created_at") and tweet.created_at
-        else "Unknown"
-    )
-
-    # Truncate long tweets for display
-    text_preview = tweet.text[:100] + "..." if len(tweet.text) > 100 else tweet.text
-    text_preview = text_preview.replace("\n", " ")  # Replace newlines with spaces
-
-    tweet_url = get_tweet_url(username, tweet.id)
-    print(f"{index:2d}. {tweet_type} | {created_at} | {tweet_url}")
-    print(f"    📝 {text_preview}")
-    print()
-
-
-def check_rate_limit_status():
-    """Check if we're still within a rate limit cooldown period"""
-    try:
-        with open(Config.RATE_LIMIT_FILE, "r") as f:
-            failure_time_str = f.read().strip()
-            failure_time = datetime.fromisoformat(failure_time_str)
-            now = datetime.now()
-            time_since_failure = now - failure_time
-
-            # Twitter API rate limits reset every 15 minutes
-            reset_interval = timedelta(minutes=Config.TWITTER_RATE_LIMIT_RESET_MINUTES)
-
-            if time_since_failure < reset_interval:
-                remaining_time = reset_interval - time_since_failure
-                total_seconds = int(remaining_time.total_seconds())
-                minutes = total_seconds // 60
-                seconds = total_seconds % 60
-
-                print(f"⚠️  Rate limit active! Please wait {minutes}m {seconds}s")
-                print(
-                    f"⏰ Reset time: {(failure_time + reset_interval).strftime('%Y-%m-%d %H:%M:%S')}"
-                )
-                return False
-            else:
-                # Rate limit has expired, remove the file
-                os.remove(Config.RATE_LIMIT_FILE)
-                print("✅ Rate limit period has expired. Safe to proceed.")
-                return True
-
-    except FileNotFoundError:
-        # No rate limit failure recorded
-        return True
-    except Exception as e:
-        print(f"Warning: Could not check rate limit status: {e}")
-        return True  # Allow running if there's any error
-
-
-def try_posting_tweet(client, new_counter):
-    """
-    Try to post a tweet and update the counter.
-    Returns True if successful, False otherwise.
-    """
-    try:
-        # 1. Get the authenticated user (current user)
-        user = client.get_me(user_fields=["protected", "public_metrics", "verified"])
-        if user.data is None:
-            raise ValueError("Could not get authenticated user information")
-
-        print(f"Authenticated as @{user.data.username} (ID: {user.data.id})")
-        print(
-            f"Account: {'Private' if user.data.protected else 'Public'} | Tweets: {user.data.public_metrics['tweet_count'] if user.data.public_metrics else 'Unknown'}"
-        )
-
-        print("\n🔍 Fetching user tweets...")
-
-        # 2. Get tweets using user ID
-        tweets = client.get_users_tweets(
-            user.data.id,
-            max_results=50,  # 5-100 is the allowed range
-            tweet_fields=["created_at", "public_metrics", "referenced_tweets"],
-            expansions=["referenced_tweets.id"],
-        )
-        print("✅ Successfully got tweets using username->ID approach")
-        print(f"\tAPI Response - tweets.data: {tweets.data}")
-        print(
-            f"\tAPI Response - tweets.meta: {tweets.meta if hasattr(tweets, 'meta') else 'No meta'}"
-        )
-
-        if tweets.data:
-            print(f"\n📋 Found {len(tweets.data)} tweets:")
-            for i, tweet in enumerate(tweets.data, 1):
-                print_tweet_info(tweet, i, user.data.username)
-
-            # 3. Filter for quoted tweets first
-            quoted_tweets = [
-                tweet
-                for tweet in tweets.data
-                if hasattr(tweet, "referenced_tweets")
-                and tweet.referenced_tweets
-                and tweet.referenced_tweets[0].type == "quoted"
-            ]
-
-            if quoted_tweets:
-                # Select the latest quoted tweet (first in the filtered list)
-                selected_tweet = quoted_tweets[0]
-                selected_tweet_url = get_tweet_url(
-                    user.data.username, selected_tweet.id
-                )
-                print(f"🎯 Selected latest quoted tweet: {selected_tweet_url}")
-
-                # 4. Post a quote tweet with the new_counter in Persian words
-
-                tweet_text = TwitterUtil.generate_persian_tweet_text(new_counter)
-
-                print(f"📝 Posting quote tweet with text:\n{tweet_text}")
-
-                response = client.create_tweet(
-                    text=tweet_text, quote_tweet_id=selected_tweet.id
-                )
-
-                response_tweet_url = get_tweet_url(
-                    user.data.username, response.data["id"]
-                )
-                print(f"✅ Quote tweet posted successfully! {response_tweet_url}")
-
-                try:
-                    store_counter(new_counter)
-                    print(f"🔢 Stored counter updated to {new_counter}")
-                    return True  # Successfully posted and updated counter
-                except Exception as e:
-                    print(
-                        f"⚠️  Tweet posted successfully, but failed to update stored counter: {e}"
-                    )
-                    print("🔧 You may need to manually update the stored counter file")
-                    return False  # Tweet posted but counter update failed
-            else:
-                print(
-                    f"❌ No quoted tweets found in the retrieved tweets. Skipping quote tweet posting."
-                )
-                return False  # No quoted tweets found
-        else:
-            print("❌ No tweets found in response.")
-            return False  # No tweets to quote
-
-    except tweepy.TooManyRequests as e:
-        print(f"Rate limit error: {e}")
-        handle_rate_limit_error(is_specific_rate_limit=True)
-        return False  # Rate limited
-    except tweepy.TweepyException as e:
-        print(f"An error occurred: {e}")
-        # Check if it's a rate limit error that wasn't caught by TooManyRequests
-        if "429" in str(e) or "rate limit" in str(e).lower():
-            handle_rate_limit_error(is_specific_rate_limit=False)
-        else:
-            print("This is a general Twitter API error (not rate limiting).")
-        return False  # Other Twitter API error
-
-
 def main() -> None:
     """Main execution function for the bot."""
     # Track whether any changes were made that need committing by CI
@@ -828,6 +564,20 @@ def main() -> None:
     # Reading the counter
     stored_counter = file_manager.get_stored_counter()
     expected_counter = DateTimeUtil.get_counter_value_for_today()
+
+    if stored_counter == 0:
+        logger.error(
+            "❌  Stored counter was not found or invalid. No tweet will be posted."
+        )
+        # exit with error code
+        sys.exit(1)
+
+    if expected_counter == 0:
+        logger.error(
+            "❌  Today is outside the counting range. No tweet will be posted."
+        )
+        # exit with error code
+        sys.exit(1)
 
     logger.info(f"🕒 Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"🔢 Stored counter value: {stored_counter}")
@@ -848,7 +598,7 @@ def main() -> None:
 
     for i in range(lagging_days):
         new_counter = stored_counter + i + 1
-        logger.info(f"\n--- Processing counter value: {new_counter} ---")
+        logger.info(f"--- Processing counter value: {new_counter} ---")
 
         # Check if we're still in a rate limit cooldown
         if not file_manager.check_rate_limit_status():
