@@ -18,7 +18,7 @@ import tempfile
 import shutil
 import os
 import sys
-from unittest.mock import Mock, patch, MagicMock, mock_open
+from unittest.mock import Mock, patch, MagicMock, mock_open, ANY
 from datetime import datetime, date, timedelta
 from typing import Any
 
@@ -331,38 +331,39 @@ class TestFileManager(unittest.TestCase):
         """Test reading counter when file exists."""
         with open(self.counter_file, "w") as f:
             f.write("42")
-
-        result = self.file_manager.get_stored_counter()
-        self.assertEqual(result, 42)
+        result = self.file_manager.get_stored_counter_and_tweet_id()
+        self.assertEqual(result, (42, None))
 
     def test_read_counter_file_not_exists(self):
         """Test reading counter when file doesn't exist."""
-        result = self.file_manager.get_stored_counter()
-        self.assertEqual(result, 1)
+        result = self.file_manager.get_stored_counter_and_tweet_id()
+        # Default now returns (0, None) when file missing
+        self.assertEqual(result, (0, None))
 
     def test_read_counter_invalid_content(self):
         """Test reading counter with invalid content."""
         with open(self.counter_file, "w") as f:
             f.write("invalid")
-
-        result = self.file_manager.get_stored_counter()
-        self.assertEqual(result, 1)
+        result = self.file_manager.get_stored_counter_and_tweet_id()
+        # Invalid content defaults to (0, None)
+        self.assertEqual(result, (0, None))
 
     def test_store_counter_success(self):
         """Test storing counter successfully."""
-        self.file_manager.store_counter(123)
+        # Provide a tweet id when storing
+        self.file_manager.store_counter_and_tweet_id(123, "tweet123")
 
         with open(self.counter_file, "r") as f:
             content = f.read()
 
-        self.assertEqual(content, "123")
+        self.assertEqual(content, "123\ntweet123")
 
     def test_store_counter_permission_error(self):
         """Test storing counter with permission error."""
         # Mock open to raise PermissionError
         with patch("builtins.open", side_effect=PermissionError("Permission denied")):
             with self.assertRaises(PermissionError):
-                self.file_manager.store_counter(123)
+                self.file_manager.store_counter_and_tweet_id(123, "tweet123")
 
     def test_save_rate_limit_failure(self):
         """Test saving rate limit failure timestamp."""
@@ -597,7 +598,6 @@ class TestTwitterClient(unittest.TestCase):
         """Test successful quote tweet posting."""
         mock_response = Mock()
         mock_response.data = {"id": "987654321"}
-
         self.mock_client.create_tweet.return_value = mock_response
         mock_get_url.return_value = "https://x.com/testuser/status/987654321"
 
@@ -605,7 +605,8 @@ class TestTwitterClient(unittest.TestCase):
             "Test text", "123456789", "testuser"
         )
 
-        self.assertEqual(result, "https://x.com/testuser/status/987654321")
+        # The refactor returns the posted tweet id (string)
+        self.assertEqual(result, "987654321")
         self.mock_client.create_tweet.assert_called_once_with(
             text="Test text", quote_tweet_id="123456789"
         )
@@ -703,29 +704,28 @@ class TestTwitterClient(unittest.TestCase):
         mock_get_url.return_value = "https://x.com/testuser/status/tweet123"
 
         # Set up mocks
-        self.twitter_client.get_authenticated_user = Mock(return_value=mock_user)
+        # The method now accepts the authenticated user as the first argument
         self.twitter_client.get_user_tweets = Mock(return_value=(mock_tweets, None))
-        self.twitter_client.post_quote_tweet = Mock(
-            return_value="https://x.com/testuser/status/new_tweet"
-        )
-        self.twitter_client.file_manager.store_counter = Mock()
+        self.twitter_client.post_quote_tweet = Mock(return_value="new_tweet")
+        self.twitter_client.file_manager.store_counter_and_tweet_id = Mock()
 
-        result = self.twitter_client.try_posting_tweet(23)
+        # Call with the authenticated user provided
+        result = self.twitter_client.try_posting_tweet(mock_user, 23, None)
 
         self.assertTrue(result)
-        self.twitter_client.get_authenticated_user.assert_called_once()
         self.twitter_client.get_user_tweets.assert_called_once_with("123456789")
         self.twitter_client.post_quote_tweet.assert_called_once_with(
             "بیست و سه تو", "tweet123", "testuser"
         )
-        self.twitter_client.file_manager.store_counter.assert_called_once_with(23)
+        self.twitter_client.file_manager.store_counter_and_tweet_id.assert_called_once_with(
+            23, "new_tweet"
+        )
 
     @patch("bot.logger")
     def test_try_posting_tweet_no_user(self, mock_logger):
         """Test tweet posting when user authentication fails."""
-        self.twitter_client.get_authenticated_user = Mock(return_value=None)
-
-        result = self.twitter_client.try_posting_tweet(23)
+        # Call with no authenticated user supplied
+        result = self.twitter_client.try_posting_tweet(None, 23, None)
 
         self.assertFalse(result)
 
@@ -734,11 +734,9 @@ class TestTwitterClient(unittest.TestCase):
         """Test tweet posting when no tweets found."""
         mock_user = Mock()
         mock_user.data.id = "123456789"
-
-        self.twitter_client.get_authenticated_user = Mock(return_value=mock_user)
         self.twitter_client.get_user_tweets = Mock(return_value=(None, None))
 
-        result = self.twitter_client.try_posting_tweet(23)
+        result = self.twitter_client.try_posting_tweet(mock_user, 23, None)
 
         self.assertFalse(result)
         self.assertTrue(mock_logger.error.called)
@@ -763,7 +761,7 @@ class TestTwitterClient(unittest.TestCase):
         self.twitter_client.get_authenticated_user = Mock(return_value=mock_user)
         self.twitter_client.get_user_tweets = Mock(return_value=(mock_tweets, None))
 
-        result = self.twitter_client.try_posting_tweet(23)
+        result = self.twitter_client.try_posting_tweet(mock_user, 23, None)
 
         self.assertFalse(result)
         self.assertTrue(mock_logger.error.called)
@@ -782,7 +780,7 @@ class TestTwitterClient(unittest.TestCase):
         self.twitter_client.get_authenticated_user = Mock(return_value=mock_user)
         self.twitter_client.get_user_tweets = Mock(return_value=(mock_tweets, None))
 
-        result = self.twitter_client.try_posting_tweet(23)
+        result = self.twitter_client.try_posting_tweet(mock_user, 23, None)
 
         self.assertFalse(result)
         mock_logger.error.assert_any_call("❌ No tweets found in response.")
@@ -801,7 +799,7 @@ class TestMainFunction(unittest.TestCase):
         """Test main function when no tweet is needed."""
         # Mock file manager
         mock_fm_instance = Mock()
-        mock_fm_instance.get_stored_counter.return_value = 100
+        mock_fm_instance.get_stored_counter_and_tweet_id.return_value = (100, None)
         mock_file_manager.return_value = mock_fm_instance
 
         # Mock counter value
@@ -835,7 +833,7 @@ class TestMainFunction(unittest.TestCase):
         """Test main function when tweet is needed and succeeds."""
         # Mock file manager
         mock_fm_instance = Mock()
-        mock_fm_instance.get_stored_counter.return_value = 98
+        mock_fm_instance.get_stored_counter_and_tweet_id.return_value = (98, None)
         mock_fm_instance.check_rate_limit_status.return_value = True
         mock_fm_instance.rate_limit_file_exists.return_value = False
         mock_file_manager.return_value = mock_fm_instance
@@ -855,8 +853,9 @@ class TestMainFunction(unittest.TestCase):
 
         # Should process 2 tweets (99 and 100)
         self.assertEqual(mock_tc_instance.try_posting_tweet.call_count, 2)
-        mock_tc_instance.try_posting_tweet.assert_any_call(99)
-        mock_tc_instance.try_posting_tweet.assert_any_call(100)
+        # First argument is the authenticated user (a Mock); use ANY to ignore it
+        mock_tc_instance.try_posting_tweet.assert_any_call(ANY, 99, None)
+        mock_tc_instance.try_posting_tweet.assert_any_call(ANY, 100, None)
 
     @patch("bot.TwitterClient")
     @patch("bot.FileManager")
@@ -874,7 +873,7 @@ class TestMainFunction(unittest.TestCase):
         """Test main function when rate limited in CI environment."""
         # Mock file manager
         mock_fm_instance = Mock()
-        mock_fm_instance.get_stored_counter.return_value = 98
+        mock_fm_instance.get_stored_counter_and_tweet_id.return_value = (98, None)
         mock_fm_instance.check_rate_limit_status.return_value = False
         mock_fm_instance.rate_limit_file_exists.return_value = True
         mock_file_manager.return_value = mock_fm_instance
@@ -910,7 +909,7 @@ class TestMainFunction(unittest.TestCase):
         """Test main function waits for rate limit in non-CI environment."""
         # Mock file manager
         mock_fm_instance = Mock()
-        mock_fm_instance.get_stored_counter.return_value = 99
+        mock_fm_instance.get_stored_counter_and_tweet_id.return_value = (99, None)
         # First call returns False (rate limited), second returns True
         mock_fm_instance.check_rate_limit_status.side_effect = [False, True]
         mock_fm_instance.rate_limit_file_exists.return_value = False
@@ -934,7 +933,7 @@ class TestMainFunction(unittest.TestCase):
         mock_logger.info.assert_any_call("🔄 Checking rate limit status again...")
 
         # Should still post the tweet after waiting
-        mock_tc_instance.try_posting_tweet.assert_called_once_with(100)
+        mock_tc_instance.try_posting_tweet.assert_called_once_with(ANY, 100, None)
 
     @patch("bot.TwitterClient")
     @patch("bot.FileManager")
@@ -952,7 +951,7 @@ class TestMainFunction(unittest.TestCase):
         """Test main function when tweet fails but rate limit file exists."""
         # Mock file manager
         mock_fm_instance = Mock()
-        mock_fm_instance.get_stored_counter.return_value = 99
+        mock_fm_instance.get_stored_counter_and_tweet_id.return_value = (99, None)
         mock_fm_instance.check_rate_limit_status.return_value = True
         mock_fm_instance.rate_limit_file_exists.return_value = (
             True  # Rate limit file exists
@@ -973,7 +972,7 @@ class TestMainFunction(unittest.TestCase):
         main()
 
         # Should attempt to post tweet
-        mock_tc_instance.try_posting_tweet.assert_called_once_with(100)
+        mock_tc_instance.try_posting_tweet.assert_called_once_with(ANY, 100, None)
 
         # Should log that changes were made (rate limit file exists)
         mock_logger.info.assert_any_call(

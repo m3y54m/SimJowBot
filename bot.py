@@ -91,51 +91,81 @@ class FileManager:
         self.counter_file = counter_file
         self.rate_limit_file = rate_limit_file
 
-    def get_stored_counter(self) -> int:
+    def get_stored_counter_and_tweet_id(self) -> Tuple[int, Optional[str]]:
         """
-        Read the counter from the counter file.
+        Read the counter and optional tweet id from the counter file.
+
+        The file format expected:
+        - line 1: integer counter
+        - line 2: tweet id (optional)
 
         Returns:
-            int: The stored counter value, defaults to 0 if file not found or invalid
+            Tuple[int, Optional[str]]: (counter, tweet_id) where tweet_id may be None.
+            On missing file or parse errors the counter defaults to 0.
         """
         try:
             with open(self.counter_file, "r", encoding="utf-8") as file:
-                counter_value = int(file.read().strip())
+                # Read first two lines; strip to remove whitespace/newlines
+                first_line = file.readline()
+                second_line = file.readline()
+
+                if not first_line:
+                    logger.warning(
+                        f"Counter file {self.counter_file} is empty, defaulting to 0"
+                    )
+                    return 0, None
+
+                try:
+                    counter_value = int(first_line.strip())
+                except ValueError:
+                    logger.error(
+                        f"Invalid counter value in {self.counter_file}: {first_line.strip()!r}. Defaulting to 0"
+                    )
+                    return 0, None
+
                 if (
                     counter_value < Config.MIN_COUNTER_VALUE
                     or counter_value > Config.MAX_COUNTER_VALUE
                 ):
                     logger.warning(
-                        f"Counter value {counter_value} out of bounds, resetting to 0"
+                        f"Counter value {counter_value} out of bounds, defaulting to 0"
                     )
-                    return 0
+                    return 0, None
 
-                return counter_value
+                tweet_id = (
+                    second_line.strip() if second_line and second_line.strip() else None
+                )
+                return counter_value, tweet_id
+
         except FileNotFoundError:
             logger.warning(
-                f"Counter file {self.counter_file} not found, defaulting to {Config.MIN_COUNTER_VALUE}"
+                f"Counter file {self.counter_file} not found, defaulting to 0"
             )
-            return Config.MIN_COUNTER_VALUE
-        except (ValueError, OSError) as e:
-            logger.error(
-                f"Error reading counter file: {e}, defaulting to {Config.MIN_COUNTER_VALUE}"
-            )
-            return Config.MIN_COUNTER_VALUE
+            return 0, None
+        except OSError as e:
+            logger.error(f"Error reading counter file: {e}, defaulting to 0")
+            return 0, None
 
-    def store_counter(self, counter: int) -> None:
+    def store_counter_and_tweet_id(self, counter: int, tweet_id: str) -> None:
         """
         Update the counter in the counter file.
 
         Args:
             counter: The counter value to store
+            tweet_id: The ID of the tweet associated with the counter
 
         Raises:
             OSError: If file write operation fails
         """
         try:
             with open(self.counter_file, "w", encoding="utf-8") as file:
+                # write counter on first line
                 file.write(str(counter))
-            logger.info(f"✅ Counter file updated successfully to {counter}")
+                # write tweet id on second line
+                file.write(f"\n{tweet_id}")
+            logger.info(
+                f"✅ Counter file updated successfully to {counter} for tweet ID {tweet_id}"
+            )
         except OSError as e:
             logger.error(f"❌ Error writing to counter file: {e}")
             logger.error(f"🔍 Attempted to write counter value: {counter}")
@@ -453,19 +483,19 @@ class TwitterClient:
             username: The username for URL generation
 
         Returns:
-            The URL of the posted tweet or None if failed
+            The ID of the posted tweet or None if failed
         """
         try:
             logger.info(f"📝 Posting quote tweet with text:\n{tweet_text}")
             response = self.client.create_tweet(
                 text=tweet_text, quote_tweet_id=quote_tweet_id
             )
-
+            response_tweet_id = response.data["id"]
             response_tweet_url = TwitterUtil.get_tweet_url(
                 username, response.data["id"]
             )
             logger.info(f"✅ Quote tweet posted successfully! {response_tweet_url}")
-            return response_tweet_url
+            return response_tweet_id
         except tweepy.TooManyRequests as e:
             logger.error(f"Rate limit error while posting: {e}")
             self._handle_rate_limit_error(is_specific_rate_limit=True)
@@ -478,82 +508,101 @@ class TwitterClient:
                 logger.error("This is a general Twitter API error (not rate limiting).")
             return None
 
-    def try_posting_tweet(self, new_counter: int) -> bool:
+    def try_posting_tweet(
+        self, twitter_user: Any, new_counter: int, stored_tweet_id: Optional[str]
+    ) -> bool:
         """
         Try to post a tweet and update the counter.
 
         Args:
             new_counter: The counter value to post
+            stored_tweet_id: The ID of the stored tweet to quote
 
         Returns:
             True if successful, False otherwise
         """
-        # Get authenticated user
-        user = self.get_authenticated_user()
-        if not user:
+        # Use the provided authenticated user
+        if not twitter_user:
             return False
 
-        # Get user tweets
-        tweets, _ = self.get_user_tweets(user.data.id)
-        if not tweets or not tweets.data:
-            logger.error("❌ No tweets found in response.")
-            return False
+        user = twitter_user
 
-        logger.info(f"📋 Found {len(tweets.data)} tweets:")
+        selected_tweet_id = None
+        if stored_tweet_id:
+            selected_tweet_id = stored_tweet_id
+            logger.info(f"📋 Using stored tweet ID {stored_tweet_id} for quoting.")
+        else:
+            # Search user tweets for the previous quoted tweet
+            tweets, _ = self.get_user_tweets(user.data.id)
+            if not tweets or not tweets.data:
+                logger.error("❌ No tweets found in response.")
+                return False
 
-        selected_tweet = None
-        previous_counter = new_counter - 1
-        previous_quoted_tweet_text = TwitterUtil.generate_persian_tweet_text(
-            previous_counter
-        )
-        for i, tweet in enumerate(tweets.data, 1):
-            TwitterUtil.print_tweet_info(tweet, i, user.data.username)
-            # Filter for quoted tweets
-            if (
-                hasattr(tweet, "referenced_tweets")
-                and tweet.referenced_tweets
-                and (
-                    tweet.referenced_tweets[0].type == "quoted"
-                    or (previous_counter == Config.MIN_COUNTER_VALUE)
-                )
-            ):
-                # Check if tweet text includes previous quoted tweet text
-                # Defensive: handle missing or non-string tweet.text (Mocks may not provide it)
-                tweet_text_value = getattr(tweet, "text", None)
-                # Consider tweet to have text only if it's actually a str. Mocks return
-                # Mock objects which should be treated as 'no text' for matching logic.
-                has_text_attr = isinstance(tweet_text_value, str)
-                tweet_text = tweet_text_value if has_text_attr else ""
+            logger.info(f"📋 Found {len(tweets.data)} tweets:")
 
-                # If the previous quoted text is in the tweet text, or if the tweet
-                # effectively has no text attribute but is a quoted tweet (common in some mocks),
-                # accept it as the selected quoted tweet.
-                if previous_quoted_tweet_text in tweet_text or (
-                    not has_text_attr and tweet.referenced_tweets[0].type == "quoted"
-                ):
-                    selected_tweet = tweet
-                    selected_tweet_url = TwitterUtil.get_tweet_url(
-                        user.data.username, selected_tweet.id
-                    )
-                    print(f"🎯 Selected latest quoted tweet: {selected_tweet_url}")
-                    break
-
-        if selected_tweet is None:
-            logger.error(
-                "❌ Previous quoted tweet was not found in the retrieved tweets. Skipping quote tweet posting."
+            selected_tweet = None
+            previous_counter = new_counter - 1
+            previous_quoted_tweet_text = TwitterUtil.generate_persian_tweet_text(
+                previous_counter
             )
+            for i, tweet in enumerate(tweets.data, 1):
+                TwitterUtil.print_tweet_info(tweet, i, user.data.username)
+                # Filter for quoted tweets
+                if (
+                    hasattr(tweet, "referenced_tweets")
+                    and tweet.referenced_tweets
+                    and (
+                        tweet.referenced_tweets[0].type == "quoted"
+                        or (previous_counter == Config.MIN_COUNTER_VALUE)
+                    )
+                ):
+                    # Check if tweet text includes previous quoted tweet text
+                    # Defensive: handle missing or non-string tweet.text (Mocks may not provide it)
+                    tweet_text_value = getattr(tweet, "text", None)
+                    # Consider tweet to have text only if it's actually a str. Mocks return
+                    # Mock objects which should be treated as 'no text' for matching logic.
+                    has_text_attr = isinstance(tweet_text_value, str)
+                    tweet_text = tweet_text_value if has_text_attr else ""
+
+                    # If the previous quoted text is in the tweet text, or if the tweet
+                    # effectively has no text attribute but is a quoted tweet (common in some mocks),
+                    # accept it as the selected quoted tweet.
+                    if previous_quoted_tweet_text in tweet_text or (
+                        not has_text_attr
+                        and tweet.referenced_tweets[0].type == "quoted"
+                    ):
+                        selected_tweet = tweet
+                        selected_tweet_id = tweet.id
+                        selected_tweet_url = TwitterUtil.get_tweet_url(
+                            user.data.username, selected_tweet_id
+                        )
+                        print(f"🎯 Selected latest quoted tweet: {selected_tweet_url}")
+                        break
+
+            if selected_tweet is None:
+                logger.error(
+                    "❌ Previous quoted tweet was not found in the retrieved tweets. Skipping quote tweet posting."
+                )
+                return False
+
+        if selected_tweet_id is None:
+            logger.error("❌ No valid tweet ID found to quote. Aborting.")
             return False
 
         # Generate tweet text and post
         tweet_text = TwitterUtil.generate_persian_tweet_text(new_counter)
-        response_url = self.post_quote_tweet(
-            tweet_text, selected_tweet.id, user.data.username
+        response_tweet_id = self.post_quote_tweet(
+            tweet_text, selected_tweet_id, user.data.username
         )
 
-        if response_url:
+        if response_tweet_id:
             try:
-                self.file_manager.store_counter(new_counter)
-                logger.info(f"🔢 Stored counter updated to {new_counter}")
+                self.file_manager.store_counter_and_tweet_id(
+                    new_counter, response_tweet_id
+                )
+                logger.info(
+                    f"🔢 Stored counter updated to {new_counter} which corresponds to tweet ID {response_tweet_id}"
+                )
                 return True
             except Exception as e:
                 logger.warning(
@@ -575,8 +624,8 @@ def main() -> None:
     # Initialize utilities
     file_manager = FileManager()
 
-    # Reading the counter
-    stored_counter = file_manager.get_stored_counter()
+    # Reading the counter (returns tuple: counter, tweet_id)
+    stored_counter, stored_tweet_id = file_manager.get_stored_counter_and_tweet_id()
     expected_counter = DateTimeUtil.get_counter_value_for_today()
 
     if stored_counter == 0:
@@ -595,6 +644,8 @@ def main() -> None:
 
     logger.info(f"🕒 Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"🔢 Stored counter value: {stored_counter}")
+    if stored_tweet_id:
+        logger.info(f"🔗 Stored tweet id: {stored_tweet_id}")
     logger.info(f"🔢 Expected counter value: {expected_counter}")
 
     # Check if we need to tweet today
@@ -609,6 +660,13 @@ def main() -> None:
 
     # Initialize Twitter client
     twitter_client = TwitterClient()
+
+    # Get authenticated user
+    twitter_user = twitter_client.get_authenticated_user()
+    if not twitter_user:
+        logger.error("❌ Could not authenticate with Twitter API. Exiting.")
+        # exit with error code
+        sys.exit(1)
 
     for i in range(lagging_days):
         new_counter = stored_counter + i + 1
@@ -634,7 +692,14 @@ def main() -> None:
                 logger.info("🔄 Checking rate limit status again...")
 
         # Try posting the tweet
-        success = twitter_client.try_posting_tweet(new_counter)
+        success = False
+        if lagging_days == 1:
+            success = twitter_client.try_posting_tweet(
+                twitter_user, new_counter, stored_tweet_id
+            )
+        else:
+            success = twitter_client.try_posting_tweet(twitter_user, new_counter, None)
+
         if success:
             changes_made = True
             logger.info(f"✅ Successfully posted tweet for counter {new_counter}")
