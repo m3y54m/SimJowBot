@@ -27,10 +27,10 @@ from typing import Dict, List, Tuple, Any
 # Add parent directory to path to import persian_numbers module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from persian_numbers import convert_to_persian_word
+from persian_numbers import convert_to_persian_word, ABS_COUNTING_LIMIT
 
 # Test configuration constants
-SUPPORTED_RANGE = (-999999, 999999)
+SUPPORTED_RANGE = (-ABS_COUNTING_LIMIT, ABS_COUNTING_LIMIT)
 PERFORMANCE_TEST_ITERATIONS = 1000
 LUT_FILENAME = "lut.txt"
 
@@ -140,8 +140,8 @@ class TestPersianNumbers(unittest.TestCase):
             (20, "بیست"),
             (100, "صد"),
             (1000, "هزار"),
-            (999999, None),  # Maximum supported positive number
-            (-999999, None),  # Maximum supported negative number
+            (ABS_COUNTING_LIMIT, None),  # Maximum supported positive number
+            (-ABS_COUNTING_LIMIT, None),  # Maximum supported negative number
         ]
 
         for number, expected in test_cases:
@@ -155,7 +155,7 @@ class TestPersianNumbers(unittest.TestCase):
                         expected,
                         f"Number {number}: expected '{expected}', got '{actual}'",
                     )
-                elif abs(number) == 999999:
+                elif abs(number) == ABS_COUNTING_LIMIT:
                     # Test maximum supported range
                     self.assertIsInstance(
                         actual, str, f"Function should return a string for {number}"
@@ -182,7 +182,7 @@ class TestPersianNumbers(unittest.TestCase):
             (-10, "منفی ده"),
             (-100, "منفی صد"),
             (-999, "منفی نهصد و نود و نه"),
-            (-999999, "منفی نهصد و نود و نه هزار و نهصد و نود و نه"),
+            (-ABS_COUNTING_LIMIT, "منفی نهصد و نود و نه هزار و نهصد و نود و نه"),
         ]
 
         for number, expected in test_cases:
@@ -222,8 +222,8 @@ class TestPersianNumbers(unittest.TestCase):
         test_cases: List[int] = [
             1000000,  # One million
             -1000000,  # Negative one million
-            9999999,  # Large positive number
-            -9999999,  # Large negative number
+            ABS_COUNTING_LIMIT + 1,  # Large positive number (beyond limit)
+            -(ABS_COUNTING_LIMIT + 1),  # Large negative number (beyond limit)
         ]
 
         for number in test_cases:
@@ -341,7 +341,7 @@ def test_function() -> None:
         50000,
         100000,
         500000,
-        999999,
+        ABS_COUNTING_LIMIT,
         # Current counter value
         173,
         # Some interesting numbers

@@ -8,7 +8,7 @@ A Twitter bot that posts daily counter values in Persian, with automatic
 rate limiting, error handling, and CI/CD integration.
 
 This bot:
-- Counts days from March 18, 2025 up to 1000
+- Counts days from March 18, 2025 up to MAX_COUNTER_VALUE
 - Posts Persian number words as quote tweets
 - Handles Twitter API rate limits gracefully
 - Maintains persistent counter state
@@ -60,13 +60,14 @@ class Config:
 
     # Bot configuration
     START_DATE: date = date(2025, 3, 18)
-    MAX_COUNTER: int = 1000
+    ABS_COUNTING_LIMIT: int = 999999
+    MAX_COUNTER_VALUE: int = int(os.environ.get("MAX_COUNTER_VALUE", str(ABS_COUNTING_LIMIT)))
     TWITTER_RATE_LIMIT_RESET_MINUTES: int = 16
     MAX_TWEET_PREVIEW_LENGTH: int = 100
     MAX_TWEETS_TO_FETCH: int = 50
 
     # Special cases
-    HEZARTOO_TEXT: str = "هزارتو"
+    MAX_COUNTER_TWEET_TEXT: str = os.environ.get("MAX_COUNTER_TWEET_TEXT", "***")
 
 
 class FileManager:
@@ -197,11 +198,11 @@ class DateTimeUtil:
         Calculate the current counter value based on days passed since start date.
 
         The counter starts at 1 on March 18, 2025 and increments by one
-        each day, up to a maximum of 1000.
+        each day, up to a maximum of MAX_COUNTER_VALUE.
 
         Returns:
             int: The counter value for the current day. Returns 0 if the
-                 date is before the start date or after the 1000th day.
+                 date is before the start date or after the MAX_COUNTER_VALUE limit.
         """
         today = date.today()
         delta = today - Config.START_DATE
@@ -211,7 +212,7 @@ class DateTimeUtil:
         count = days_passed + 1
 
         # Check for edge cases
-        if count < 1 or count > Config.MAX_COUNTER:
+        if count < 1 or count > Config.MAX_COUNTER_VALUE:
             return 0
 
         return count
@@ -305,8 +306,8 @@ class TwitterUtil:
         Returns:
             str: The Persian text for the tweet
         """
-        if counter == Config.MAX_COUNTER:
-            return Config.HEZARTOO_TEXT
+        if counter == Config.MAX_COUNTER_VALUE:
+            return Config.MAX_COUNTER_TWEET_TEXT
         else:
             return f"{convert_to_persian_word(counter)} تو"
 
@@ -359,11 +360,11 @@ def get_counter_value_for_today():
     passed since March 18, 2025.
 
     The counter starts at 1 on March 18, 2025 and increments by one
-    each day, up to a maximum of 1000.
+    each day, up to a maximum of MAX_COUNTER_VALUE.
 
     Returns:
         int: The counter value for the current day. Returns 0 if the
-             date is before the start date or after the 1000th day.
+             date is before the start date or after the MAX_COUNTER_VALUE limit.
     """
     start_date = date(2025, 3, 18)
     today = date.today()
@@ -373,11 +374,11 @@ def get_counter_value_for_today():
     days_passed = delta.days
 
     # The count starts from 1, so add 1 to the number of days passed.
-    # The maximum count is 1000.
+    # The maximum count is MAX_COUNTER_VALUE.
     count = days_passed + 1
 
     # Check for the edge cases
-    if count < 1 or count > 1000:
+    if count < 1 or count > Config.MAX_COUNTER_VALUE:
         return 0
     else:
         return count
@@ -770,10 +771,7 @@ def try_posting_tweet(client, new_counter):
 
                 # 4. Post a quote tweet with the new_counter in Persian words
 
-                if new_counter == 1000:
-                    tweet_text = "هزارتو"
-                else:
-                    tweet_text = f"{convert_to_persian_word(new_counter)} تو"
+                tweet_text = TwitterUtil.generate_persian_tweet_text(new_counter)
 
                 print(f"📝 Posting quote tweet with text:\n{tweet_text}")
 

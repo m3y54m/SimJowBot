@@ -124,6 +124,8 @@ For testing and development:
    ACCESS_TOKEN=your_access_token_here
    ACCESS_TOKEN_SECRET=your_access_token_secret_here
    BEARER_TOKEN=your_bearer_token_here
+   MAX_COUNTER_VALUE=your_max_counter_value_here
+   MAX_COUNTER_TWEET_TEXT=your_secret_text_for_max_counter_here
    ```
 
 4. **Generate OAuth tokens** (if needed):
@@ -159,6 +161,8 @@ For testing and development:
    - `ACCESS_TOKEN`
    - `ACCESS_TOKEN_SECRET`
    - `BEARER_TOKEN`
+   - `MAX_COUNTER_VALUE` (required secret max counter value)
+   - `MAX_COUNTER_TWEET_TEXT` (required secret text for max counter)
 
 3. **Enable GitHub Actions**:
    - Go to the Actions tab in your repository
@@ -279,7 +283,7 @@ The `Config` class centralizes all configuration:
 class Config:
     # Counter logic
     START_DATE = date(2025, 3, 18)     # Bot start date
-    MAX_COUNTER = 1000                  # Maximum counter value
+    MAX_COUNTER_VALUE = int(os.environ.get("MAX_COUNTER_VALUE", str(ABS_COUNTING_LIMIT)))  # Secret max counter value
     
     # Rate limiting
     TWITTER_RATE_LIMIT_RESET_MINUTES = 16  # Rate limit reset time
@@ -289,7 +293,7 @@ class Config:
     MAX_TWEET_PREVIEW_LENGTH = 100     # Tweet preview truncation
     
     # Special cases
-    HEZARTOO_TEXT = "هزارتو"          # Text for counter 1000
+    MAX_COUNTER_TWEET_TEXT = os.environ.get("MAX_COUNTER_TWEET_TEXT", "***")  # Secret text for max counter
 ```
 
 ### Counter Logic
@@ -298,7 +302,7 @@ The bot uses a date-based counter system:
 - **Start date**: March 18, 2025
 - **Starting value**: 1
 - **Increment**: +1 per day
-- **Maximum**: 1000 (reaches maximum after 1000 days)
+- **Maximum**: MAX_COUNTER_VALUE (reaches maximum after MAX_COUNTER_VALUE days)
 
 ### Rate Limiting
 
@@ -453,7 +457,7 @@ The bot test suite includes **52 comprehensive test cases** organized into 7 tes
 
 **6 comprehensive test cases** covering:
 
-- **Unit tests**: Validates against reference lookup table (1-1000)
+- **Unit tests**: Validates against reference lookup table (1-1000 for Persian number conversion)
 - **Edge cases**: Tests boundary values and special cases
 - **Performance tests**: Ensures conversion speed < 1ms per conversion
 - **Error handling**: Tests out-of-range number handling

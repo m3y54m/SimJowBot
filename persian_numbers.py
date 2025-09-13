@@ -10,6 +10,9 @@ using an efficient algorithmic approach without external dependencies.
 Author: SimJowBot
 """
 
+# Constants
+ABS_COUNTING_LIMIT = 999999
+
 # Persian numbers lookup table (embedded for efficiency)
 PERSIAN_NUMBERS_LUT = {
     1: "یک",
@@ -87,7 +90,7 @@ def convert_to_persian_word(number):
         - No external dependencies or file I/O required
     """
     # Check if number is within supported range
-    if abs(number) > 999999:
+    if abs(number) > ABS_COUNTING_LIMIT:
         return f"خطا: عدد خارج از محدوده پشتیبانی شده (-999,999 تا +999,999)"
 
     if number == 0:
@@ -145,7 +148,7 @@ def get_supported_range():
     Returns:
         tuple: (min_value, max_value) supported by the converter
     """
-    return (-999999, 999999)
+    return (-ABS_COUNTING_LIMIT, ABS_COUNTING_LIMIT)
 
 
 def is_number_supported(number):

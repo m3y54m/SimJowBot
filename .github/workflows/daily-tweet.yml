@@ -40,6 +40,8 @@ jobs:
           ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
           ACCESS_TOKEN_SECRET: ${{ secrets.ACCESS_TOKEN_SECRET }}
           BEARER_TOKEN: ${{ secrets.BEARER_TOKEN }}
+          MAX_COUNTER_VALUE: ${{ secrets.MAX_COUNTER_VALUE }}
+          MAX_COUNTER_TWEET_TEXT: ${{ secrets.MAX_COUNTER_TWEET_TEXT }}
 
       - name: Commit and push changes
         run: |
