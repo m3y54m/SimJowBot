@@ -2,58 +2,68 @@ name: Unit Tests & Code Quality
 
 on:
   push:
-    branches: [ '*' ]  # Run on all branches
-  pull_request:  # Run on PRs to default branch (auto-detected)
-  workflow_dispatch:  # Allow manual triggering
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+# Set permissions for the entire workflow
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Use a concurrency group to ensure only one deployment happens at a time
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
-  test:
+  # This job runs the tests and prepares the coverage report
+  tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # This job runs unit tests with 93% coverage and publishes an HTML coverage report
-    # Coverage report URL: https://m3y54m.github.io/SimJowBot/coverage/
     
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install tweepy python-dotenv pytest pytest-cov
+    
+    - name: Run tests with coverage
+      run: |
+        pytest tests/ -v --tb=short --cov=. --cov-report=html --cov-fail-under=80 --cov-config=.coveragerc
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install tweepy python-dotenv pytest pytest-cov
-
-      - name: Run unit tests with coverage
-        run: |
-          # Run tests using pytest with coverage analysis
-          # Fail if coverage is below 80% to maintain code quality
-          # Only measure coverage for source code, exclude tests directory
-          pytest tests/ -v --tb=short --cov=. --cov-report=term-missing --cov-report=html --cov-fail-under=80 --cov-config=.coveragerc
-        env:
-          # These are dummy values for testing - the actual bot doesn't run in CI tests
-          API_KEY: "dummy_key_for_testing"
-          API_KEY_SECRET: "dummy_secret_for_testing"
-          ACCESS_TOKEN: "dummy_token_for_testing"
-          ACCESS_TOKEN_SECRET: "dummy_token_secret_for_testing"
-          BEARER_TOKEN: "dummy_bearer_token_for_testing"
-
-      - name: Upload coverage reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-report
-          path: htmlcov/
-          
-      - name: Deploy coverage report to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        if: github.ref == 'refs/heads/master'
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: htmlcov
-          destination_dir: coverage
-          # Coverage report will be available at: https://m3y54m.github.io/SimJowBot/coverage/
-          # To enable this, go to repository Settings > Pages > Source: Deploy from a branch > Branch: gh-pages
+    # This step now creates the correct directory structure for the artifact
+    - name: Structure artifact for deployment
+      run: mkdir _site && mv ./htmlcov ./_site/coverage
+        
+    - name: Upload Pages artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        # Upload the directory that now contains the 'coverage' subdirectory
+        path: './_site'
+        
+  # This job deploys the coverage report
+  deploy-coverage-report:
+    # Only run this job on a push to the main/master branch
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    needs: tests
+    runs-on: ubuntu-latest
+    
+    environment:
+      name: github-pages
+      # Update the URL to point to the correct subdirectory
+      url: ${{ steps.deployment.outputs.page_url }}coverage
+      
+    steps:
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
