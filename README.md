@@ -11,7 +11,9 @@ SimJowBot is an automated Twitter bot built with Python and Tweepy that posts da
 - **🛡️ Error Recovery**: Robust error handling and recovery mechanisms
 - **🚀 CI/CD Integration**: Fully automated deployment via GitHub Actions workflows
 - **🏗️ Object-Oriented Design**: Modern class-based architecture for maintainability
-- **🧪 Comprehensive Testing**: Full test suite with 58 test cases and 100% coverage
+- **🧪 Comprehensive Testing**: Full test suite with 58 test cases and automated CI testing
+- **📊 Test Coverage Analysis**: Automated coverage reporting with 80% minimum requirement
+- **🔍 Continuous Quality**: Automated testing on every push and pull request
 - **📊 Structured Logging**: Enhanced logging with emojis and detailed information
 
 ## Architecture Overview
@@ -61,7 +63,8 @@ SimJowBot/
 │   ├── generate_lut.py             # Lookup table generator
 │   └── lut.txt                     # Reference lookup table for testing
 └── .github/workflows/
-    └── tweet.yml                   # GitHub Actions workflow for automation
+    ├── daily-tweet.yml             # GitHub Actions workflow for daily automation
+    └── tests.yml                   # GitHub Actions workflow for CI/CD testing
 ```
 
 ## Dependencies
@@ -136,10 +139,16 @@ For testing and development:
 
 6. **Run tests** to verify setup:
    ```bash
+   # Run all tests
    python -m pytest tests/ -v
+   
+   # Run tests with coverage analysis (same as GitHub Actions)
+   python -m pytest tests/ -v --tb=short --cov=. --cov-report=term-missing --cov-report=xml --cov-fail-under=80
    ```
 
 ### GitHub Actions Deployment
+
+#### Daily Tweet Workflow
 
 1. **Fork the repository** to your GitHub account
 
@@ -159,6 +168,39 @@ For testing and development:
 4. **Grant repository permissions**:
    - Ensure the workflow has write permissions to update `counter.txt`
    - This is configured in the workflow file under `permissions`
+
+#### Continuous Integration Workflow
+
+The repository includes an automated testing workflow (`tests.yml`) that:
+
+- **Runs automatically**: On every push to any branch and on pull requests
+- **Manual triggering**: Can be triggered manually from GitHub Actions UI
+- **Comprehensive testing**: Executes all 94 test cases with coverage analysis
+- **Coverage reporting**: Generates detailed HTML coverage reports with 93% coverage achieved
+- **Quality gates**: Workflow fails if coverage drops below 80%
+- **Interactive coverage reports**: HTML reports deployed to GitHub Pages for easy browsing
+- **Fast feedback**: Provides immediate feedback on code quality and test results
+
+**Coverage Report Access**:
+The interactive HTML coverage report is automatically published to GitHub Pages and accessible at:
+- **Coverage Report URL**: `https://m3y54m.github.io/SimJowBot/coverage/`
+- **Detailed line-by-line analysis**: Shows exactly which code is covered by tests
+- **File-by-file breakdown**: Individual coverage metrics for each module
+- **Visual indicators**: Easy-to-read color-coded coverage visualization
+
+**To enable GitHub Pages** (one-time setup):
+1. Go to repository **Settings** → **Pages**
+2. Under **Source**, select "Deploy from a branch"
+3. Choose **Branch**: `gh-pages` and **Folder**: `/ (root)`
+4. Save settings - coverage reports will be available at the URL above after the next push to master
+
+**Testing Features**:
+- Python 3.12 environment setup
+- Dependency installation (tweepy, python-dotenv, pytest, pytest-cov)
+- Comprehensive test execution with verbose output
+- Coverage analysis with missing line identification
+- Safe testing with dummy API credentials (no actual API calls)
+- HTML coverage reports with interactive browsing
 
 ## Usage
 

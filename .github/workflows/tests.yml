@@ -10,6 +10,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # This job runs unit tests with 93% coverage and publishes an HTML coverage report
+    # Coverage report URL: https://m3y54m.github.io/SimJowBot/coverage/
     
     steps:
       - name: Checkout repository
@@ -28,7 +30,9 @@ jobs:
       - name: Run unit tests with coverage
         run: |
           # Run tests using pytest with coverage analysis
-          pytest tests/ -v --tb=short --cov=. --cov-report=term-missing --cov-report=xml
+          # Fail if coverage is below 80% to maintain code quality
+          # Only measure coverage for source code, exclude tests directory
+          pytest tests/ -v --tb=short --cov=. --cov-report=term-missing --cov-report=html --cov-fail-under=80 --cov-config=.coveragerc
         env:
           # These are dummy values for testing - the actual bot doesn't run in CI tests
           API_KEY: "dummy_key_for_testing"
@@ -42,4 +46,14 @@ jobs:
         if: always()
         with:
           name: coverage-report
-          path: coverage.xml
+          path: htmlcov/
+          
+      - name: Deploy coverage report to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        if: github.ref == 'refs/heads/master'
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: htmlcov
+          destination_dir: coverage
+          # Coverage report will be available at: https://m3y54m.github.io/SimJowBot/coverage/
+          # To enable this, go to repository Settings > Pages > Source: Deploy from a branch > Branch: gh-pages

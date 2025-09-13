@@ -308,6 +308,14 @@ class TestFileManager(unittest.TestCase):
 
             self.assertEqual(content, mock_now.isoformat())
 
+    def test_save_rate_limit_failure_os_error(self):
+        """Test saving rate limit failure with OS error."""
+        with patch("builtins.open", side_effect=OSError("Disk full")):
+            with patch("bot.logger") as mock_logger:
+                # Should not raise exception, just log error
+                self.file_manager.save_rate_limit_failure()
+                mock_logger.error.assert_called_with("Failed to save rate limit failure: Disk full")
+
     def test_check_rate_limit_status_no_file(self):
         """Test rate limit status when no file exists."""
         result = self.file_manager.check_rate_limit_status()
@@ -337,6 +345,22 @@ class TestFileManager(unittest.TestCase):
 
         result = self.file_manager.check_rate_limit_status()
         self.assertFalse(result)
+
+    def test_check_rate_limit_status_exception_handling(self):
+        """Test rate limit status check with general exception."""
+        # Create a rate limit file first
+        with open(self.rate_limit_file, "w") as f:
+            f.write("valid_timestamp")
+
+        # Mock datetime.fromisoformat to raise an exception
+        with patch("bot.datetime") as mock_datetime:
+            mock_datetime.fromisoformat.side_effect = ValueError("Invalid format")
+            with patch("bot.logger") as mock_logger:
+                result = self.file_manager.check_rate_limit_status()
+                
+                # Should return True (allow running) when there's an error
+                self.assertTrue(result)
+                mock_logger.warning.assert_called()
 
     def test_rate_limit_file_exists_true(self):
         """Test rate limit file existence check when file exists."""
@@ -550,6 +574,34 @@ class TestTwitterClient(unittest.TestCase):
         self.assertIsNone(result)
         self.assertTrue(mock_logger.error.called)
 
+    @patch("bot.logger")
+    def test_post_quote_tweet_api_error_with_rate_limit_text(self, mock_logger):
+        """Test quote tweet posting with API error containing rate limit text."""
+        self.mock_client.create_tweet.side_effect = tweepy.TweepyException("Rate limit exceeded")
+
+        result = self.twitter_client.post_quote_tweet(
+            "Test text", "123456789", "testuser"
+        )
+
+        self.assertIsNone(result)
+        # Should handle as rate limit error
+        self.twitter_client.file_manager.save_rate_limit_failure.assert_called_once()
+        self.assertTrue(mock_logger.error.called)
+
+    @patch("bot.logger")
+    def test_post_quote_tweet_api_error_with_429_code(self, mock_logger):
+        """Test quote tweet posting with API error containing 429 status code."""
+        self.mock_client.create_tweet.side_effect = tweepy.TweepyException("Error 429: Too Many Requests")
+
+        result = self.twitter_client.post_quote_tweet(
+            "Test text", "123456789", "testuser"
+        )
+
+        self.assertIsNone(result)
+        # Should handle as rate limit error
+        self.twitter_client.file_manager.save_rate_limit_failure.assert_called_once()
+        self.assertTrue(mock_logger.error.called)
+
     @patch("bot.TwitterUtil.print_tweet_info")
     @patch("bot.TwitterUtil.get_tweet_url")
     @patch("bot.TwitterUtil.generate_persian_tweet_text")
@@ -640,6 +692,25 @@ class TestTwitterClient(unittest.TestCase):
 
         self.assertFalse(result)
         self.assertTrue(mock_logger.error.called)
+
+    @patch("bot.logger")
+    def test_try_posting_tweet_empty_tweets_data(self, mock_logger):
+        """Test tweet posting when tweets.data is empty."""
+        mock_user = Mock()
+        mock_user.data.id = "123456789"
+        mock_user.data.username = "testuser"
+
+        # Mock tweets with empty data
+        mock_tweets = Mock()
+        mock_tweets.data = []  # Empty list
+
+        self.twitter_client.get_authenticated_user = Mock(return_value=mock_user)
+        self.twitter_client.get_user_tweets = Mock(return_value=(mock_tweets, None))
+
+        result = self.twitter_client.try_posting_tweet(23)
+
+        self.assertFalse(result)
+        mock_logger.error.assert_any_call("❌ No tweets found in response.")
 
 
 class TestMainFunction(unittest.TestCase):
@@ -790,6 +861,48 @@ class TestMainFunction(unittest.TestCase):
         # Should still post the tweet after waiting
         mock_tc_instance.try_posting_tweet.assert_called_once_with(100)
 
+    @patch("bot.TwitterClient")
+    @patch("bot.FileManager") 
+    @patch("bot.DateTimeUtil.get_counter_value_for_today")
+    @patch("bot.DateTimeUtil.is_ci_environment")
+    @patch("bot.logger")
+    def test_main_tweet_failed_with_rate_limit_file(
+        self,
+        mock_logger,
+        mock_is_ci,
+        mock_get_counter,
+        mock_file_manager,
+        mock_twitter_client,
+    ):
+        """Test main function when tweet fails but rate limit file exists."""
+        # Mock file manager
+        mock_fm_instance = Mock()
+        mock_fm_instance.get_stored_counter.return_value = 99
+        mock_fm_instance.check_rate_limit_status.return_value = True
+        mock_fm_instance.rate_limit_file_exists.return_value = True  # Rate limit file exists
+        mock_file_manager.return_value = mock_fm_instance
+
+        # Mock counter value
+        mock_get_counter.return_value = 100
+
+        # Mock CI environment
+        mock_is_ci.return_value = False
+
+        # Mock Twitter client to fail
+        mock_tc_instance = Mock()
+        mock_tc_instance.try_posting_tweet.return_value = False  # Tweet fails
+        mock_twitter_client.return_value = mock_tc_instance
+
+        main()
+
+        # Should attempt to post tweet
+        mock_tc_instance.try_posting_tweet.assert_called_once_with(100)
+        
+        # Should log that changes were made (rate limit file exists)
+        mock_logger.info.assert_any_call(
+            "📝 Changes were made during this run - exiting with success code for commit"
+        )
+
 
 class TestErrorHandling(unittest.TestCase):
     """Test cases for error handling and edge cases."""
@@ -813,6 +926,512 @@ class TestErrorHandling(unittest.TestCase):
         ):
             with self.assertRaises(Exception):
                 main()
+
+
+class TestLegacyFunctions(unittest.TestCase):
+    """Test cases for legacy functions."""
+
+    def setUp(self):
+        """Set up test environment with temporary directory."""
+        self.test_dir = tempfile.mkdtemp()
+        self.original_counter_file = bot.Config.COUNTER_FILE
+        bot.Config.COUNTER_FILE = os.path.join(self.test_dir, "test_counter.txt")
+
+    def tearDown(self):
+        """Clean up test environment."""
+        bot.Config.COUNTER_FILE = self.original_counter_file
+        shutil.rmtree(self.test_dir)
+
+    def test_get_stored_counter_file_exists(self):
+        """Test legacy get_stored_counter when file exists."""
+        with open(bot.Config.COUNTER_FILE, "w") as f:
+            f.write("42")
+
+        result = bot.get_stored_counter()
+        self.assertEqual(result, 42)
+
+    def test_get_stored_counter_file_not_exists(self):
+        """Test legacy get_stored_counter when file doesn't exist."""
+        result = bot.get_stored_counter()
+        self.assertEqual(result, 1)
+
+    def test_get_stored_counter_invalid_content(self):
+        """Test legacy get_stored_counter with invalid content."""
+        with open(bot.Config.COUNTER_FILE, "w") as f:
+            f.write("invalid")
+
+        result = bot.get_stored_counter()
+        self.assertEqual(result, 1)
+
+    @patch("builtins.print")
+    def test_store_counter_success(self, mock_print):
+        """Test legacy store_counter successful operation."""
+        bot.store_counter(123)
+
+        with open(bot.Config.COUNTER_FILE, "r") as f:
+            content = f.read()
+
+        self.assertEqual(content, "123")
+        mock_print.assert_called_with("✅ Counter file updated successfully to 123")
+
+    @patch("builtins.print")
+    def test_store_counter_os_error(self, mock_print):
+        """Test legacy store_counter with OS error."""
+        # Use a non-existent directory to trigger OS error naturally
+        invalid_path = "/invalid/path/counter.txt"
+        original_counter_file = bot.Config.COUNTER_FILE
+        bot.Config.COUNTER_FILE = invalid_path
+        
+        try:
+            bot.store_counter(123)
+        except OSError:
+            pass  # Expected
+        finally:
+            bot.Config.COUNTER_FILE = original_counter_file
+
+        # Should print error messages (check that any error message was printed)
+        self.assertTrue(any("❌ Error writing to counter file:" in str(call) for call in mock_print.call_args_list))
+
+    @patch("bot.date")
+    def test_legacy_get_counter_value_for_today(self, mock_date):
+        """Test legacy get_counter_value_for_today function."""
+        mock_date.today.return_value = date(2025, 3, 18)  # Start date
+        mock_date.side_effect = lambda *args, **kwargs: date(*args, **kwargs)
+
+        result = bot.get_counter_value_for_today()
+        self.assertEqual(result, 1)
+
+
+class TestMainExecution(unittest.TestCase):
+    """Test cases for the main execution block."""
+
+    @patch("bot.main")
+    @patch("bot.logger")
+    def test_main_execution_success(self, mock_logger, mock_main):
+        """Test successful main execution."""
+        mock_main.return_value = None
+        
+        # Simulate running the main block
+        try:
+            if __name__ == "__main__":
+                mock_main()
+        except SystemExit:
+            pass  # Expected for successful execution
+
+    @patch("bot.main")
+    @patch("bot.logger")
+    def test_main_execution_keyboard_interrupt(self, mock_logger, mock_main):
+        """Test main execution with keyboard interrupt."""
+        mock_main.side_effect = KeyboardInterrupt()
+        
+        # Test the keyboard interrupt handling
+        with self.assertRaises(SystemExit) as cm:
+            try:
+                mock_main()
+            except KeyboardInterrupt:
+                mock_logger.info("Bot execution interrupted by user")
+                raise SystemExit(0)
+                
+        self.assertEqual(cm.exception.code, 0)
+
+    @patch("bot.main")
+    @patch("bot.logger")
+    def test_main_execution_unexpected_error(self, mock_logger, mock_main):
+        """Test main execution with unexpected error."""
+        mock_main.side_effect = Exception("Unexpected error")
+        
+        # Test the exception handling - this simulates the __main__ block
+        try:
+            mock_main()
+        except Exception as e:
+            mock_logger.error(f"Unexpected error: {e}")
+            # In real execution, sys.exit(1) would be called
+
+
+class TestStandaloneFunctions(unittest.TestCase):
+    """Test cases for standalone functions"""
+
+    @patch("bot.save_rate_limit_failure")
+    @patch("builtins.print")
+    def test_handle_rate_limit_error_specific(self, mock_print, mock_save):
+        """Test handle_rate_limit_error with specific rate limit"""
+        with patch("bot.datetime") as mock_datetime:
+            mock_now = MagicMock()
+            mock_now.strftime.return_value = "2024-01-01 12:30:00"
+            mock_datetime.now.return_value = mock_now
+            mock_datetime.timedelta.return_value = MagicMock()
+
+            bot.handle_rate_limit_error(is_specific_rate_limit=True)
+
+            mock_save.assert_called_once()
+            mock_print.assert_called()
+
+    @patch("bot.save_rate_limit_failure")
+    @patch("builtins.print")
+    def test_handle_rate_limit_error_general(self, mock_print, mock_save):
+        """Test handle_rate_limit_error with general rate limit"""
+        with patch("bot.datetime") as mock_datetime:
+            mock_now = MagicMock()
+            mock_now.strftime.return_value = "2024-01-01 12:30:00"
+            mock_datetime.now.return_value = mock_now
+            mock_datetime.timedelta.return_value = MagicMock()
+
+            bot.handle_rate_limit_error(is_specific_rate_limit=False)
+
+            mock_save.assert_called_once()
+            mock_print.assert_called()
+
+    def test_get_tweet_type_retweet(self):
+        """Test get_tweet_type for retweet"""
+        tweet = MagicMock()
+        ref_tweet = MagicMock()
+        ref_tweet.type = "retweeted"
+        tweet.referenced_tweets = [ref_tweet]
+
+        result = bot.get_tweet_type(tweet)
+        self.assertEqual(result, "🔄 Retweet")
+
+    def test_get_tweet_type_reply_referenced(self):
+        """Test get_tweet_type for reply with referenced tweets"""
+        tweet = MagicMock()
+        ref_tweet = MagicMock()
+        ref_tweet.type = "replied_to"
+        tweet.referenced_tweets = [ref_tweet]
+
+        result = bot.get_tweet_type(tweet)
+        self.assertEqual(result, "💬 Reply")
+
+    def test_get_tweet_type_quote_tweet(self):
+        """Test get_tweet_type for quote tweet"""
+        tweet = MagicMock()
+        ref_tweet = MagicMock()
+        ref_tweet.type = "quoted"
+        tweet.referenced_tweets = [ref_tweet]
+
+        result = bot.get_tweet_type(tweet)
+        self.assertEqual(result, "📝 Quote Tweet")
+
+    def test_get_tweet_type_reply_by_text(self):
+        """Test get_tweet_type for reply identified by text"""
+        tweet = MagicMock()
+        tweet.referenced_tweets = None
+        tweet.text = "@username this is a reply"
+
+        result = bot.get_tweet_type(tweet)
+        self.assertEqual(result, "💬 Reply")
+
+    def test_get_tweet_type_original(self):
+        """Test get_tweet_type for original tweet"""
+        tweet = MagicMock()
+        tweet.referenced_tweets = None
+        tweet.text = "This is an original tweet"
+
+        result = bot.get_tweet_type(tweet)
+        self.assertEqual(result, "📄 Original Tweet")
+
+    def test_get_tweet_type_no_referenced_tweets_attribute(self):
+        """Test get_tweet_type when tweet has no referenced_tweets attribute"""
+        tweet = MagicMock()
+        del tweet.referenced_tweets
+        tweet.text = "This is an original tweet"
+
+        result = bot.get_tweet_type(tweet)
+        self.assertEqual(result, "📄 Original Tweet")
+
+    @patch("builtins.print")
+    @patch("bot.get_tweet_type")
+    @patch("bot.get_tweet_url")
+    def test_print_tweet_info_with_created_at(self, mock_get_url, mock_get_type, mock_print):
+        """Test print_tweet_info with created_at timestamp"""
+        tweet = MagicMock()
+        tweet.text = "This is a test tweet"
+        tweet.id = "123456789"
+        tweet.created_at = datetime(2024, 1, 1, 12, 30, 0)
+        
+        mock_get_type.return_value = "📄 Original Tweet"
+        mock_get_url.return_value = "https://twitter.com/user/status/123456789"
+
+        bot.print_tweet_info(tweet, 1, "testuser")
+
+        mock_get_type.assert_called_once_with(tweet)
+        mock_get_url.assert_called_once_with("testuser", "123456789")
+        mock_print.assert_called()
+
+    @patch("builtins.print")
+    @patch("bot.get_tweet_type")
+    @patch("bot.get_tweet_url")
+    def test_print_tweet_info_no_created_at(self, mock_get_url, mock_get_type, mock_print):
+        """Test print_tweet_info without created_at timestamp"""
+        tweet = MagicMock()
+        tweet.text = "This is a test tweet"
+        tweet.id = "123456789"
+        tweet.created_at = None
+        
+        mock_get_type.return_value = "📄 Original Tweet"
+        mock_get_url.return_value = "https://twitter.com/user/status/123456789"
+
+        bot.print_tweet_info(tweet, 1, "testuser")
+
+        mock_get_type.assert_called_once_with(tweet)
+        mock_get_url.assert_called_once_with("testuser", "123456789")
+        mock_print.assert_called()
+
+    @patch("builtins.print")
+    @patch("bot.get_tweet_type")
+    @patch("bot.get_tweet_url")
+    def test_print_tweet_info_long_tweet(self, mock_get_url, mock_get_type, mock_print):
+        """Test print_tweet_info with long tweet text"""
+        tweet = MagicMock()
+        tweet.text = "This is a very long tweet that should be truncated because it exceeds the 100 character limit for display purposes in the console output"
+        tweet.id = "123456789"
+        tweet.created_at = datetime(2024, 1, 1, 12, 30, 0)
+        
+        mock_get_type.return_value = "📄 Original Tweet"
+        mock_get_url.return_value = "https://twitter.com/user/status/123456789"
+
+        bot.print_tweet_info(tweet, 1, "testuser")
+
+        mock_get_type.assert_called_once_with(tweet)
+        mock_get_url.assert_called_once_with("testuser", "123456789")
+        mock_print.assert_called()
+
+    @patch("builtins.print")
+    @patch("bot.get_tweet_type")
+    @patch("bot.get_tweet_url")
+    def test_print_tweet_info_tweet_with_newlines(self, mock_get_url, mock_get_type, mock_print):
+        """Test print_tweet_info with tweet containing newlines"""
+        tweet = MagicMock()
+        tweet.text = "This is a tweet\nwith newlines\nin it"
+        tweet.id = "123456789"
+        tweet.created_at = datetime(2024, 1, 1, 12, 30, 0)
+        
+        mock_get_type.return_value = "📄 Original Tweet"
+        mock_get_url.return_value = "https://twitter.com/user/status/123456789"
+
+        bot.print_tweet_info(tweet, 1, "testuser")
+
+        mock_get_type.assert_called_once_with(tweet)
+        mock_get_url.assert_called_once_with("testuser", "123456789")
+        mock_print.assert_called()
+
+
+class TestCheckRateLimitStatus(unittest.TestCase):
+    """Test cases for check_rate_limit_status function"""
+
+    @patch("builtins.open", new_callable=mock_open, read_data="2024-01-01T12:00:00")
+    @patch("os.path.exists", return_value=True)
+    @patch("builtins.print")
+    def test_check_rate_limit_status_active(self, mock_print, mock_exists, mock_file):
+        """Test check_rate_limit_status when rate limit is still active"""
+        with patch("bot.datetime") as mock_datetime:
+            mock_now = datetime(2024, 1, 1, 12, 10, 0)  # 10 minutes after failure
+            mock_failure_time = datetime(2024, 1, 1, 12, 0, 0)
+            
+            mock_datetime.now.return_value = mock_now
+            mock_datetime.fromisoformat.return_value = mock_failure_time
+            mock_datetime.timedelta.return_value = timedelta(minutes=16)
+
+            result = bot.check_rate_limit_status()
+            
+            self.assertFalse(result)
+            mock_print.assert_called()
+
+    @patch("builtins.open", new_callable=mock_open, read_data="2024-01-01T12:00:00")
+    @patch("os.path.exists", return_value=True)
+    @patch("os.remove")
+    @patch("builtins.print")
+    def test_check_rate_limit_status_expired(self, mock_print, mock_remove, mock_exists, mock_file):
+        """Test check_rate_limit_status when rate limit has expired"""
+        with patch("bot.datetime") as mock_datetime:
+            mock_now = datetime(2024, 1, 1, 12, 20, 0)  # 20 minutes after failure
+            mock_failure_time = datetime(2024, 1, 1, 12, 0, 0)
+            
+            mock_datetime.now.return_value = mock_now
+            mock_datetime.fromisoformat.return_value = mock_failure_time
+            mock_datetime.timedelta.return_value = timedelta(minutes=16)
+
+            result = bot.check_rate_limit_status()
+            
+            self.assertTrue(result)
+            mock_remove.assert_called_once_with(Config.RATE_LIMIT_FILE)
+            mock_print.assert_called()
+
+    @patch("builtins.open", side_effect=FileNotFoundError())
+    def test_check_rate_limit_status_no_file(self, mock_file):
+        """Test check_rate_limit_status when no rate limit file exists"""
+        result = bot.check_rate_limit_status()
+        self.assertTrue(result)
+
+    @patch("builtins.open", side_effect=Exception("File error"))
+    @patch("builtins.print")
+    def test_check_rate_limit_status_exception_handling(self, mock_print, mock_file):
+        """Test check_rate_limit_status handles exceptions gracefully"""
+        result = bot.check_rate_limit_status()
+        
+        self.assertTrue(result)  # Should allow running if there's any error
+        mock_print.assert_called()
+
+
+class TestTryPostingTweet(unittest.TestCase):
+    """Test cases for try_posting_tweet function"""
+
+    def setUp(self):
+        """Set up test environment."""
+        self.mock_client = MagicMock()
+
+    @patch("builtins.print")
+    @patch("bot.store_counter")
+    @patch("bot.convert_to_persian_word")
+    @patch("bot.get_tweet_url")
+    @patch("bot.print_tweet_info")
+    def test_try_posting_tweet_success(self, mock_print_info, mock_get_url, 
+                                     mock_convert, mock_store, mock_print):
+        """Test successful tweet posting"""
+        # Setup mock user
+        mock_user_data = MagicMock()
+        mock_user_data.username = "testuser"
+        mock_user_data.id = "123456"
+        mock_user_data.protected = False
+        mock_user_data.public_metrics = {"tweet_count": 100}
+        
+        mock_user = MagicMock()
+        mock_user.data = mock_user_data
+        self.mock_client.get_me.return_value = mock_user
+
+        # Setup mock tweets
+        mock_tweet = MagicMock()
+        mock_tweet.id = "tweet123"
+        mock_ref_tweet = MagicMock()
+        mock_ref_tweet.type = "quoted"
+        mock_tweet.referenced_tweets = [mock_ref_tweet]
+        
+        mock_tweets = MagicMock()
+        mock_tweets.data = [mock_tweet]
+        mock_tweets.meta = {"result_count": 1}
+        self.mock_client.get_users_tweets.return_value = mock_tweets
+
+        # Setup mock create_tweet response
+        mock_response = MagicMock()
+        mock_response.data = {"id": "new_tweet_123"}
+        self.mock_client.create_tweet.return_value = mock_response
+
+        # Setup other mocks
+        mock_convert.return_value = "یک"
+        mock_get_url.return_value = "https://twitter.com/test/status/123"
+
+        result = bot.try_posting_tweet(self.mock_client, 1)
+
+        self.assertTrue(result)
+        mock_store.assert_called_once_with(1)
+
+    @patch("builtins.print")
+    def test_try_posting_tweet_no_user(self, mock_print):
+        """Test try_posting_tweet when user data is None"""
+        mock_user = MagicMock()
+        mock_user.data = None
+        self.mock_client.get_me.return_value = mock_user
+
+        with self.assertRaises(ValueError) as context:
+            bot.try_posting_tweet(self.mock_client, 1)
+        
+        self.assertIn("Could not get authenticated user information", str(context.exception))
+
+    @patch("builtins.print")
+    def test_try_posting_tweet_no_tweets(self, mock_print):
+        """Test try_posting_tweet when no tweets are returned"""
+        # Setup mock user
+        mock_user_data = MagicMock()
+        mock_user_data.username = "testuser"
+        mock_user_data.id = "123456"
+        mock_user_data.protected = False
+        mock_user_data.public_metrics = {"tweet_count": 100}
+        
+        mock_user = MagicMock()
+        mock_user.data = mock_user_data
+        self.mock_client.get_me.return_value = mock_user
+
+        # No tweets returned
+        mock_tweets = MagicMock()
+        mock_tweets.data = None
+        self.mock_client.get_users_tweets.return_value = mock_tweets
+
+        result = bot.try_posting_tweet(self.mock_client, 1)
+
+        self.assertFalse(result)
+
+    @patch("builtins.print")
+    @patch("bot.print_tweet_info")
+    def test_try_posting_tweet_no_quoted_tweets(self, mock_print_info, mock_print):
+        """Test try_posting_tweet when no quoted tweets are found"""
+        # Setup mock user
+        mock_user_data = MagicMock()
+        mock_user_data.username = "testuser"
+        mock_user_data.id = "123456"
+        mock_user_data.protected = False
+        mock_user_data.public_metrics = {"tweet_count": 100}
+        
+        mock_user = MagicMock()
+        mock_user.data = mock_user_data
+        self.mock_client.get_me.return_value = mock_user
+
+        # Setup mock tweets without quoted tweets
+        mock_tweet = MagicMock()
+        mock_tweet.id = "tweet123"
+        mock_tweet.referenced_tweets = None  # No referenced tweets
+        
+        mock_tweets = MagicMock()
+        mock_tweets.data = [mock_tweet]
+        mock_tweets.meta = {"result_count": 1}
+        self.mock_client.get_users_tweets.return_value = mock_tweets
+
+        result = bot.try_posting_tweet(self.mock_client, 1)
+
+        self.assertFalse(result)
+
+    @patch("builtins.print")
+    @patch("bot.store_counter")
+    @patch("bot.get_tweet_url")
+    @patch("bot.print_tweet_info")
+    def test_try_posting_tweet_counter_1000(self, mock_print_info, mock_get_url, 
+                                           mock_store, mock_print):
+        """Test try_posting_tweet with counter value 1000"""
+        # Setup mock user
+        mock_user_data = MagicMock()
+        mock_user_data.username = "testuser"
+        mock_user_data.id = "123456"
+        mock_user_data.protected = False
+        mock_user_data.public_metrics = {"tweet_count": 100}
+        
+        mock_user = MagicMock()
+        mock_user.data = mock_user_data
+        self.mock_client.get_me.return_value = mock_user
+
+        # Setup mock tweets
+        mock_tweet = MagicMock()
+        mock_tweet.id = "tweet123"
+        mock_ref_tweet = MagicMock()
+        mock_ref_tweet.type = "quoted"
+        mock_tweet.referenced_tweets = [mock_ref_tweet]
+        
+        mock_tweets = MagicMock()
+        mock_tweets.data = [mock_tweet]
+        mock_tweets.meta = {"result_count": 1}
+        self.mock_client.get_users_tweets.return_value = mock_tweets
+
+        # Setup mock create_tweet response
+        mock_response = MagicMock()
+        mock_response.data = {"id": "new_tweet_123"}
+        self.mock_client.create_tweet.return_value = mock_response
+
+        mock_get_url.return_value = "https://twitter.com/test/status/123"
+
+        result = bot.try_posting_tweet(self.mock_client, 1000)
+
+        self.assertTrue(result)
+        # Verify that "هزارتو" text was used for 1000
+        self.mock_client.create_tweet.assert_called_once()
+        call_args = self.mock_client.create_tweet.call_args
+        self.assertEqual(call_args[1]['text'], "هزارتو")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,27 @@
+[run]
+# Measure coverage for source code only, exclude tests
+source = .
+omit = 
+    tests/*
+    */tests/*
+    test_*
+    *_test.py
+    */site-packages/*
+    */dist-packages/*
+    */__pycache__/*
+
+[report]
+# Show missing lines in coverage report
+show_missing = True
+
+# Exclude lines from coverage (e.g., debug code, platform-specific code)
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if self.debug:
+    if settings.DEBUG
+    raise AssertionError
+    raise NotImplementedError
+    if 0:
+    if __name__ == .__main__.:
+    pass
