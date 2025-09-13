@@ -163,9 +163,6 @@ class FileManager:
                 file.write(str(counter))
                 # write tweet id on second line
                 file.write(f"\n{tweet_id}")
-            logger.info(
-                f"✅ Counter file updated successfully to {counter} for tweet ID {tweet_id}"
-            )
         except OSError as e:
             logger.error(f"❌ Error writing to counter file: {e}")
             logger.error(f"🔍 Attempted to write counter value: {counter}")
@@ -486,7 +483,7 @@ class TwitterClient:
             The ID of the posted tweet or None if failed
         """
         try:
-            logger.info(f"📝 Posting quote tweet with text:\n{tweet_text}")
+            logger.info(f"📝 Posting quote tweet with text: {tweet_text}")
             response = self.client.create_tweet(
                 text=tweet_text, quote_tweet_id=quote_tweet_id
             )
@@ -494,7 +491,7 @@ class TwitterClient:
             response_tweet_url = TwitterUtil.get_tweet_url(
                 username, response.data["id"]
             )
-            logger.info(f"✅ Quote tweet posted successfully! {response_tweet_url}")
+            logger.info(f"✅ Quote tweet posted successfully: {response_tweet_url}")
             return response_tweet_id
         except tweepy.TooManyRequests as e:
             logger.error(f"Rate limit error while posting: {e}")
@@ -645,7 +642,7 @@ def main() -> None:
     logger.info(f"🕒 Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info(f"🔢 Stored counter value: {stored_counter}")
     if stored_tweet_id:
-        logger.info(f"🔗 Stored tweet id: {stored_tweet_id}")
+        logger.info(f"🔗 Stored tweet ID: {stored_tweet_id}")
     logger.info(f"🔢 Expected counter value: {expected_counter}")
 
     # Check if we need to tweet today
