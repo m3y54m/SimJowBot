@@ -661,7 +661,12 @@ class TestMainFunction(unittest.TestCase):
         # Mock counter value
         mock_get_counter.return_value = 100
 
-        main()
+        # Expect SystemExit(0) when no tweet is needed
+        with self.assertRaises(SystemExit) as cm:
+            main()
+        
+        # Verify it exits with code 0 (success)
+        self.assertEqual(cm.exception.code, 0)
 
         mock_logger.info.assert_any_call(
             "✅ No tweet needed today. Stored counter is up to date."

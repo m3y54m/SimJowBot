@@ -15,7 +15,7 @@ on:
 jobs:
   tweet:
     runs-on: ubuntu-latest
-    timeout-minutes: 5  # Short timeout since we don't want to wait for rate limits
+    timeout-minutes: 10  # Short timeout since we don't want to wait for rate limits
     permissions:
       contents: write  # Required for pushing changes back to repository
     steps:
