@@ -386,9 +386,8 @@ class TwitterClient:
             if not var_value:
                 missing.append(var_name)
             else:
-                # Show first/last 4 chars to help identify which token is which
-                masked = f"{var_value[:4]}...{var_value[-4:]}" if len(var_value) > 8 else "***"
-                logger.info(f"✓ {var_name}: {masked}")
+                # Only show length, not actual characters (security)
+                logger.info(f"✓ {var_name}: present ({len(var_value)} chars)")
         
         if missing:
             logger.error("❌ Missing required credentials:")
