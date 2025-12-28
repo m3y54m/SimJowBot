@@ -367,6 +367,40 @@ class TwitterClient:
         )
         self.file_manager = FileManager()
 
+    @staticmethod
+    def validate_credentials() -> bool:
+        """Validate that all required credentials are present.
+        
+        Returns:
+            bool: True if all credentials are present, False otherwise
+        """
+        required_vars = {
+            "API_KEY": Config.API_KEY,
+            "API_KEY_SECRET": Config.API_KEY_SECRET,
+            "ACCESS_TOKEN": Config.ACCESS_TOKEN,
+            "ACCESS_TOKEN_SECRET": Config.ACCESS_TOKEN_SECRET,
+        }
+        
+        missing = []
+        for var_name, var_value in required_vars.items():
+            if not var_value:
+                missing.append(var_name)
+            else:
+                # Show first/last 4 chars to help identify which token is which
+                masked = f"{var_value[:4]}...{var_value[-4:]}" if len(var_value) > 8 else "***"
+                logger.info(f"✓ {var_name}: {masked}")
+        
+        if missing:
+            logger.error("❌ Missing required credentials:")
+            for var_name in missing:
+                logger.error(f"   - {var_name}")
+            logger.error("\n💡 Make sure these are set in GitHub Actions Secrets:")
+            logger.error("   Settings → Secrets and variables → Actions → Repository secrets")
+            return False
+        
+        logger.info("✅ All required credentials are present")
+        return True
+
     def _handle_rate_limit_error(self, is_specific_rate_limit: bool = True) -> None:
         """
         Handle rate limit errors with consistent messaging.
@@ -658,10 +692,18 @@ def main() -> None:
     # Initialize Twitter client
     twitter_client = TwitterClient()
 
+    # Validate credentials before attempting authentication
+    logger.info("🔐 Validating Twitter API credentials...")
+    if not TwitterClient.validate_credentials():
+        logger.error("❌ Cannot proceed without valid credentials. Exiting.")
+        sys.exit(1)
+
     # Get authenticated user
+    logger.info("🔐 Attempting to authenticate with Twitter API...")
     twitter_user = twitter_client.get_authenticated_user()
     if not twitter_user:
         logger.error("❌ Could not authenticate with Twitter API. Exiting.")
+        logger.error("💡 See error messages above for troubleshooting steps.")
         # exit with error code
         sys.exit(1)
 
